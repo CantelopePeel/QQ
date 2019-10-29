@@ -1,7 +1,9 @@
 import random
 
+import tqdm as tqdm
 from qiskit.transpiler import CouplingMap
 from z3 import *
+
 
 # Generates couplings in the coupling map (which is directed) that are undirected. Useful for determining if we can
 # perform a swap on two qubits.
@@ -14,11 +16,7 @@ def get_undirected_couplings(coupling_map: CouplingMap):
 
 def is_literal(literal: ExprRef):
     if is_not(literal):
-        literals = literal.children()
-        if len(literals) == 1 and is_const(literals[0]):
-            return True
-        else:
-            return False
+        return is_const(literal.arg(0))
     elif is_const(literal):
         return True
     else:
@@ -38,11 +36,12 @@ def is_clause(clause: ExprRef):
 
 
 def clause_length(clause: ExprRef):
-    if not is_clause(clause):
-        return -1 # TODO: raise exception.
+    # TODO: Should we even check if we do already?
+    # if not is_clause(clause):
+    #     return -1 # TODO: raise exception.
 
     if is_or(clause):
-        return len(clause.children())
+        return clause.num_args()
     elif is_literal(clause):
         return 1
     else:
@@ -52,13 +51,20 @@ def clause_length(clause: ExprRef):
 # Split the clause into a number of sections.
 def split_clause(clause: ExprRef, sub_clause_size: int):
     literals = clause.children()
+
     aux_literal = FreshBool(prefix='aux')
-    for i in range(0, len(literals), (sub_clause_size - 1)):
-        if i == 0:
-            actual_aux_literal = aux_literal
-        else:
-            actual_aux_literal = Not(aux_literal)
-        yield Or([actual_aux_literal] + literals[i:(i + sub_clause_size - 1)])
+    num_literals = len(literals)
+    num_normal_literals = sub_clause_size - 1
+
+    split_clauses = []
+    # Set up the auxiliary literal for first sub clause manually.
+    neg_aux_literal = Not(aux_literal)
+    sub_clause = Or([neg_aux_literal] + literals[0:num_normal_literals])
+    split_clauses.append(sub_clause)
+
+    for i in range(1, num_literals, num_normal_literals):
+        split_clauses.append(Or([aux_literal] + literals[i:(i + num_normal_literals)]))
+    return split_clauses
 
 
 # Split a CNF expression until it is k-CNF. This means that every clause contains at most `k' literals.
@@ -70,7 +76,12 @@ def kcnf_split_clauses(goal: Goal, max_clause_length: int = 3):
 
     kcnf_goal = Goal()
     mod_count = 0
-    for clause in goal:
+    num_clauses = len(goal)
+    for i in tqdm.tqdm(range(num_clauses)):
+        clause = goal.get(i)
+        if not is_clause(clause):
+            return  # TODO: raise exception
+
         if clause_length(clause) > max_clause_length:
             mod_count += 1
             split_clauses = split_clause(clause, sub_clause_size=max_clause_length)
@@ -83,7 +94,7 @@ def kcnf_split_clauses(goal: Goal, max_clause_length: int = 3):
 
 def strip_unit_clauses(goal: Goal):
     stripped_goal = Goal()
-    for clause in goal:
+    for clause in tqdm.tqdm(goal):
         if clause_length(clause) > 1:
             stripped_goal.add(clause)
     return stripped_goal

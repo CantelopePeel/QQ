@@ -33,6 +33,8 @@ def build_circuit():
     qc.cx(0, 3)
     qc.cx(1, 2)
     qc.cx(2, 3)
+    qc.cx(2, 0)
+
 
     # qc = QuantumCircuit(3, 2)
     # qc.h(0)
@@ -84,6 +86,8 @@ def constrain_gate_ends_before_end_time(node: DAGNode, dag: DAGCircuit, gate_tim
         goal.add(
             gate_times[node][qubit_0.index] + gate_durations[node][qubit_0.index]
             == gate_times[node][qubit_1.index] + gate_durations[node][qubit_1.index])
+        goal.add(
+            gate_times[node][qubit_0.index] == gate_times[node][qubit_1.index])
 
     # TODO change method name now that it has two functions. Or move this into own function
     for layer, coupling_vars in swap_nodes[node].items():
@@ -150,7 +154,7 @@ def constrain_gate_duration(node_index, node: DAGNode, qubit_mapping: IntVector,
         # TODO: Support topologies which accept 3+ qubit gate implementations.
         raise TranspilerError('3+ qubit gates are not permitted.')
 
-
+# Constrains gates to have gates which are physically coupled.
 def constrain_gate_input_adjacency(node: DAGNode, qubit_mapping: IntVector, coupling_map: CouplingMap, goal: Goal):
     if len(node.qargs) == 1:
         pass  # TODO: Don't need to stipulate anything, right?
@@ -183,7 +187,7 @@ def generate_gate_times(dag: DAGCircuit):
 #
 # TODO: Can we just generate possible swaps for paths between source and target? Will this still work and be optimal?
 def generate_gate_mapping_swaps(node_index: int, node: DAGNode, dag: DAGCircuit, coupling_map: CouplingMap,
-                                prior_mapping: IntVector, goal: Goal, qubits_used: int) -> Dict[
+                                prior_mapping: IntVector, goal: Goal, qubits_used: int, max_swaps_addable: int) -> Dict[
     DAGNode, Dict[int, Dict[Tuple[int, int], Bool]]]:
     num_physical_qubits = len(coupling_map.physical_qubits)
     num_virtual_qubits = qubits_used
@@ -194,7 +198,15 @@ def generate_gate_mapping_swaps(node_index: int, node: DAGNode, dag: DAGCircuit,
     first_layer_mapping = None
     prior_layer_mapping_exists = None
     undirected_couplings = [coupling for coupling in get_undirected_couplings(coupling_map)]
-    for swap_layer_index in range(len(undirected_couplings)):
+
+    num_swap_layers = len(undirected_couplings)
+    if num_swap_layers > max_swaps_addable:
+        num_swap_layers = max_swaps_addable
+
+    if num_swap_layers <= 0:
+        return node_swap_gates, swap_gate_exists_list, prior_mapping
+
+    for swap_layer_index in range(num_swap_layers):
         layer_mapping_exists = Bool('swap_layer_mapping_needed_%d_layer_%d' % (node_index, swap_layer_index))
         layer_mapping = IntVector('swap_layer_mapping_%d_layer_%d' % (node_index, swap_layer_index),
                                   num_physical_qubits)
@@ -257,6 +269,7 @@ def generate_gate_mapping(node_index: int, node: DAGNode, dag: DAGCircuit, prior
     return gate_mapping
 
 
+# Primary driver to generate constrains on circuit schedule optimization.
 def constrain_gate_schedule(dag: DAGCircuit, coupling_map: CouplingMap, goal: Goal, input_qubit_map: IntVector,
                             qubits_used: int, max_circuit_time: int, max_swaps_addable: int):
     print(dag.input_map.values())
@@ -284,7 +297,8 @@ def constrain_gate_schedule(dag: DAGCircuit, coupling_map: CouplingMap, goal: Go
                                                                                                        coupling_map,
                                                                                                        prior_mapping,
                                                                                                        goal,
-                                                                                                       qubits_used)
+                                                                                                       qubits_used,
+                                                                                                       max_swaps_addable)
         swap_gate_exists_list.extend(node_swap_gate_exists_list)
         generate_gate_mapping(node_index, node, dag, swap_layer_mapping, coupling_map, goal, qubits_used)
 
@@ -320,31 +334,29 @@ def constrain_gate_schedule(dag: DAGCircuit, coupling_map: CouplingMap, goal: Go
     for i in range(num_physical_qubits):
         goal.add(circuit_end_time >= gate_times[prior_node][i] + gate_durations[prior_node][i])
     #
-    # # Swap added count:
-    # swaps_added = Int('swaps_added')
-    # goal.add(And(swaps_added >= 0,
-    #                swaps_added < max_swaps_addable))
-    #
-    # swap_gate_exists_pb_list = [(item, 1) for item in swap_gate_exists_list]
-    # swap_gate_count_constraint = PbLe(swap_gate_exists_pb_list, max_swaps_addable)
-    # swap_gate_counts = [If(swap_gate_exists, 1, 0) for swap_gate_exists in swap_gate_exists_list]
-    #
-    # goal.add(swap_gate_count_constraint)
-    # goal.add(swaps_added >= Sum(swap_gate_counts))
+    # Swap added count:
+    swaps_added = Int('swaps_added')
+    goal.add(And(swaps_added >= 0,
+                 swaps_added <= max_swaps_addable))
 
-    # for assertion in goal.assertions():
-    #     print("ASSERT_FD: {} | {}".format(is_finite_domain(assertion), assertion))
+    swap_gate_exists_pb_list = [(item, 1) for item in swap_gate_exists_list]
+    swap_gate_count_constraint = PbLe(swap_gate_exists_pb_list, max_swaps_addable)
+    swap_gate_counts = [If(swap_gate_exists, 1, 0) for swap_gate_exists in swap_gate_exists_list]
+
+    goal.add(swap_gate_count_constraint)
+    goal.add(swaps_added >= Sum(swap_gate_counts))
 
     print("NUM_ASSERTS: {}".format(len(goal)))
 
     return
 
 
-def print_unsat(goal: Goal):
+# Print useful debug info when solver returns an unsat result.
+def print_unsat(solver: Solver):
     unsat_solver = Solver()
 
     assertion_map = {}
-    for index, assertion in enumerate(goal.assertions()):
+    for index, assertion in enumerate(solver.assertions()):
         assert_val = Bool('assert_%d' % index)
         unsat_solver.assert_and_track(assertion, assert_val)
         assertion_map[assert_val] = assertion
@@ -365,7 +377,7 @@ def print_unsat(goal: Goal):
     #         var_set.append(e)
     # print(solver.check(var_set))
 
-
+# Checks if the DAG is compatible with the algorithm.
 def check_dag_circuit_compatible(dag: DAGCircuit, coupling_map: CouplingMap) -> bool:
     if len(dag.qregs) != 1 or dag.qregs.get('q', None) is None:
         raise TranspilerError('Model runs on physical circuits only.')
@@ -374,7 +386,7 @@ def check_dag_circuit_compatible(dag: DAGCircuit, coupling_map: CouplingMap) -> 
         raise TranspilerError('The layout does not match the amount of qubits in the DAG.')
     return True
 
-
+# Builds the full model.
 def build_model(circ: QuantumCircuit, coupling_map: CouplingMap, qubits_used: int, max_circuit_time: int,
                 max_swaps_addable: int):
     dag = circuit_to_dag(circ)
@@ -437,15 +449,17 @@ Optional[QuantumCircuit]:
     return remap_circ
 
 
-def combine_variable_counts(var_counts0: Dict, var_counts1: Dict):
-    for key0 in var_counts1.keys():
-        if key0 in var_counts0:
-            var_counts0[key0] += var_counts1[key0]
+# Helper form DIMACS stats function.
+def combine_counts(counts0: Dict, counts1: Dict):
+    for key0 in counts1.keys():
+        if key0 in counts0:
+            counts0[key0] += counts1[key0]
         else:
-            var_counts0[key0] = var_counts1[key0]
-    return var_counts0
+            counts0[key0] = counts1[key0]
+    return counts0
 
 
+# Print info about DIMACS CNF representation of the model.
 def print_dimacs_stats(cnf_content: str):
     cnf_lines = cnf_content.splitlines()
     comment_lines = list(filter(lambda l: l.startswith('c'), cnf_lines))
@@ -466,6 +480,9 @@ def print_dimacs_stats(cnf_content: str):
 
     # Clause length.
     clause_lengths = [len(clause_value) for clause_value in clause_values]
+    clause_lengths_agg_map = map(lambda l: {l: 1}, clause_lengths)
+    clause_lengths_agg_reduce = reduce(lambda l0, l1: combine_counts(l0, l1), clause_lengths_agg_map)
+
     avg_clause_length = sum(clause_lengths) / len(clause_lengths)
     min_clause_length = min(clause_lengths)
     max_clause_length = max(clause_lengths)
@@ -474,15 +491,15 @@ def print_dimacs_stats(cnf_content: str):
     print("  Max. clause len:", max_clause_length)
 
     for i in range(min_clause_length, max_clause_length + 1):
-        num_clauses = len(list(filter(
-            lambda c: c == i, clause_lengths)))
-        print("  Len {} clauses: {}".format(i, num_clauses))
+        if i in clause_lengths_agg_reduce.keys():
+            num_clauses = clause_lengths_agg_reduce[i]
+            print("  Len {} clauses: {}".format(i, num_clauses))
 
     # Variable occurrence.
     flat_clause_values = [value for clause in clause_values for value in clause]
     variable_values = map(lambda v: abs(v), flat_clause_values)
     variable_occurrences_map = map(lambda v: {v: 1}, variable_values)
-    variable_occurrences_reduce = reduce(lambda v0, v1: combine_variable_counts(v0, v1), variable_occurrences_map)
+    variable_occurrences_reduce = reduce(lambda v0, v1: combine_counts(v0, v1), variable_occurrences_map)
 
     avg_var_occ = sum(variable_occurrences_reduce.values()) / num_variables
     min_var_occ = min(variable_occurrences_reduce.values())
@@ -492,9 +509,9 @@ def print_dimacs_stats(cnf_content: str):
     print("  Max. vars occ:", max_var_occ)
 
     for i in range(min_var_occ, max_var_occ + 1):
-        num_clauses = len(list(filter(
-            lambda v: v == i, variable_occurrences_reduce.values())))
-        print("  Occ {} vars: {}".format(i, num_clauses))
+        if i in variable_occurrences_reduce.keys():
+            num_clauses = variable_occurrences_reduce[i]
+            print("  Occ {} vars: {}".format(i, num_clauses))
 
 
 # Constructs the optimized circuit using:
@@ -503,8 +520,10 @@ def print_dimacs_stats(cnf_content: str):
 # TODO handle passing around of output layout
 # TODO see todo above circuit remap function.
 # TODO Do something like is done in _copy_circuit_metadata in lookahead_swap.py
-def construct_circuit_from_model(model: ModelRef, dag: DAGCircuit, coupling_map: CouplingMap, num_virtual_qubits: int):
+def construct_circuit_from_model(model: ModelRef, dag: DAGCircuit, coupling_map: CouplingMap, num_virtual_qubits: int, max_swaps_addable: int):
     model_decls_map = {decl.name(): model[decl] for decl in model.decls()}
+
+    print("NUM VARS:", len(model_decls_map))
 
     times = {}
     for k, v in model_decls_map.items():
@@ -557,8 +576,17 @@ def construct_circuit_from_model(model: ModelRef, dag: DAGCircuit, coupling_map:
         # Should be only one node in this layer, may not always be a gate.
         if len(sub_dag.gate_nodes()) == 1:
             # Add swap layers.
+            # TODO: If an actual reciprocal undirected edge, can place swap as usual (cost: 1 swap (decomposed 3 cnot),
+            # TODO: depth 3). Else if we only have a strictly directed edge need to explicit that cost will be (1 swap
+            # TODO: (decomposed 3 cnot) and 4 Hadamard transforms, depth 5).
             undirected_couplings = [coupling for coupling in get_undirected_couplings(coupling_map)]
-            for swap_layer_index in range(len(undirected_couplings)):
+
+            num_swap_layers = len(undirected_couplings)
+
+            if num_swap_layers > max_swaps_addable:
+                num_swap_layers = max_swaps_addable
+
+            for swap_layer_index in range(num_swap_layers):
                 for coupling in undirected_couplings:
                     swap_gate_decl_name = ("swap_gate_%d_layer_%d_coupling_%d_%d" % (node_index, swap_layer_index,
                                                                                      coupling[0], coupling[1]))
@@ -611,32 +639,53 @@ def construct_circuit_from_model(model: ModelRef, dag: DAGCircuit, coupling_map:
     return new_dag, init_layout
 
 
+# Turns a finite domain goal into a k-SAT goal.
 def transform_goal_to_ksat(goal: Goal, max_clause_size: int = 3):
     fd_solver = SolverFor('QF_FD')
-    fd_solver.append(goal)
+    simplify_tactic = With('simplify',
+                           som=True,
+                           pull_cheap_ite=True,
+                           push_ite_bv=False,
+                           local_ctx=True,
+                           local_ctx_limit=10_000_000,
+                           flat=True,
+                           hoist_mul=False,
+                           elim_and=True,
+                           blast_distinct=True)
+    fd_pre_process_tactic = Then('simplify', 'propagate-values', 'card2bv', simplify_tactic, 'max-bv-sharing',
+                                 'bit-blast', simplify_tactic, 'sat-preprocess')
+    fd_solver.add(*goal)
+    translated_fd_solver = fd_solver.translate(main_ctx())
+    translated_fd_goal = Goal()
+    translated_fd_goal.add(*translated_fd_solver.assertions())
+    preprocessed_fd_goal = fd_pre_process_tactic(translated_fd_goal)[0]
+    preprocessed_fd_solver = SolverFor('QF_FD')
+    preprocessed_fd_solver.add(*preprocessed_fd_goal)
 
-    print("TRANSFORM: ")
-    fd_solver.check()
+    print(fd_solver.assertions())
+    print(preprocessed_fd_goal)
+
+    print("TRANSFORM:", len(fd_solver.assertions()), len(translated_fd_solver.assertions()), len(preprocessed_fd_solver.assertions()))
+    check_solver_sat(fd_solver)
+    check_solver_sat(preprocessed_fd_solver)
 
     with open("output/smt2_file_goal_fd.txt", "w") as smt2_fd_goal_file:
-        smt2_fd_goal_file.write(fd_solver.sexpr())
+        smt2_fd_goal_file.write(preprocessed_fd_solver.sexpr())
+    print(fd_solver.assertions())
 
-    print("SAT ASSERTS:", len(fd_solver.assertions()))
+    print("SAT ASSERTS:", len(fd_solver.assertions()), len(preprocessed_fd_solver.assertions()))
 
     print_dimacs_stats(fd_solver.dimacs())
     print(fd_solver.statistics())
 
     sat_preproc_goal = Goal()
     sat_preproc_goal.append(fd_solver.assertions())
-    preproc_goal = strip_unit_clauses(sat_preproc_goal)
-    kcnf_sat_goal = kcnf_split_clauses(preproc_goal, max_clause_length=max_clause_size)
-    sat_preproc_tactic = Repeat(Tactic('tseitin-cnf'))
-    sat_preproc_result = sat_preproc_tactic(sat_preproc_goal)
-    print('SAT PREPROC RES SUBGOALS:', len(sat_preproc_result))
-    print_dimacs_stats(sat_preproc_result[0].dimacs())
+    # preproc_goal = strip_unit_clauses(sat_preproc_goal)
+    kcnf_sat_goal = kcnf_split_clauses(sat_preproc_goal, max_clause_length=max_clause_size)
 
     print("KCNF_STATS:")
     print_dimacs_stats(kcnf_sat_goal.dimacs())
+    return kcnf_sat_goal
 
     # for line in [line for line in fd_solver.dimacs().splitlines() if line.startswith('c')]:
     #     print("C:", line)
@@ -645,7 +694,7 @@ def transform_goal_to_ksat(goal: Goal, max_clause_size: int = 3):
 def setup_optimizer(goal: Goal):
     optimizer = Optimize()
     optimizer.set(priority='pareto')
-    for assertion in goal.assertions():
+    for assertion in goal:
         optimizer.add(assertion)
 
     optimizer.minimize(Int('circuit_end_time'))
@@ -665,69 +714,67 @@ def check_solver_sat(solver: Solver):
 
 # TODO write test routines to ensure the output of the circuit is the same as for original.
 
+def main():
+    # TODO: See above TODOs about undirected edges and cost model.
+    # coupling_edges = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6],
+    #                   [1, 0], [2, 1], [3, 2], [4, 3], [5, 4], [6, 5]]
+    coupling_edges = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 2],
+                      [1, 0], [1, 2], [3, 2], [4, 3], [2, 0]]
 
-coupling_edges = [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5], [5, 6],
-                  [1, 0], [2, 1], [3, 2], [4, 3], [5, 4], [6, 5]]
+    # coupling_edges = [[0, 1], [1, 2], [2, 3]]
+    input_coupling_map = CouplingMap(couplinglist=coupling_edges)
 
-# coupling_edges = [[0, 1], [1, 2], [2, 3]]
-input_coupling_map = CouplingMap(couplinglist=coupling_edges)
+    input_circ = build_circuit()
 
-input_circ = build_circuit()
+    print(input_circ.draw())
+    print(input_circ.qasm())
+    remap_circuit, qubits_used = remap_compact_virtual_qubit_registers(input_circ, input_coupling_map)
+    print(remap_circuit.draw())
+    print(remap_circuit.qasm())
 
-print(input_circ.draw())
-print(input_circ.qasm())
-remap_circuit, qubits_used = remap_compact_virtual_qubit_registers(input_circ, input_coupling_map)
-print(remap_circuit.draw())
-print(remap_circuit.qasm())
+    # dag_drawer(circuit_to_dag(remap_circuit))
 
-# dag_drawer(circuit_to_dag(remap_circuit))
+    max_swaps_addable = 3
+    goal = build_model(remap_circuit, input_coupling_map, qubits_used, max_circuit_time=10,
+                       max_swaps_addable=max_swaps_addable)
+    # ksat_goal = transform_goal_to_ksat(goal)
 
-goal = build_model(remap_circuit, input_coupling_map, qubits_used, max_circuit_time=5, max_swaps_addable=3)
+    optimizer = setup_optimizer(goal)
+    print("OPT CHECK: ", optimizer.check())
+    opt_model = optimizer.model()
+    print("OPT MODEL DONE")
+    opt_dag, init_layout = construct_circuit_from_model(opt_model, circuit_to_dag(remap_circuit), input_coupling_map, qubits_used,
+                                                        max_swaps_addable=max_swaps_addable)
+    opt_circ = dag_to_circuit(opt_dag)
 
-transform_goal_to_ksat(goal)
+    print(opt_circ.draw())
 
-# optimizer = setup_optimizer(solver)
-# print("OPT CHECK: ", optimizer.check())
-# opt_model = optimizer.model()
-# print("OPT MODEL DONE")
-# opt_dag, init_layout = construct_circuit_from_model(opt_model, circuit_to_dag(remap_circuit), input_coupling_map, qubits_used)
-# opt_circ = dag_to_circuit(opt_dag)
-#
-# print(opt_circ.draw())
-#
-# final_opt_circ = remap_finalize_layout_virtual_qubit_registers(opt_circ, input_coupling_map, init_layout)
-#
-# print(final_opt_circ.draw())
+    # cnf = """
+    # p cnf 2 4
+    # 1 2 3 0
+    # 1 -2 4 0
+    # -3 -4 50
+    # """
 
-# print_dimacs_stats(cnf_output)
+    # TODO: Separate into method for sim / translation.
+    # backend = Aer.get_backend('qasm_simulator')
+    # oracle = LogicalExpressionOracle(cnf)  # , optimization=True)
+    # algorithm = Grover(oracle, mct_mode='basic')
+    #
+    # oracle_circuit = oracle.construct_circuit()
+    # grover_circuit = algorithm.construct_circuit()
+    # print("A:")
+    # grover_dag = circuit_to_dag(grover_circuit)
+    # oracle_dag = circuit_to_dag(oracle_circuit)
+    # # dag_drawer(grover_dag)
+    # print("Q:")
+    # # dag_drawer(oracle_dag)
+    # print("DEPTH:", grover_dag.depth())
+    # print("NUM_QUBITS:", grover_dag.num_qubits())
+    # result = algorithm.run(backend)
+    # print(result["result"])
+    # print(result)
 
 
-# print(cnf_output.splitlines()[:10])
-
-cnf = """
-p cnf 2 4
-1 2 3 0
-1 -2 4 0
--3 -4 50 
-"""
-
-# TODO: Separate into method for sim / translation.
-backend = Aer.get_backend('qasm_simulator')
-oracle = LogicalExpressionOracle(cnf)  # , optimization=True)
-algorithm = Grover(oracle, mct_mode='basic')
-
-oracle_circuit = oracle.construct_circuit()
-grover_circuit = algorithm.construct_circuit()
-# print("A:")
-# grover_dag = circuit_to_dag(grover_circuit)
-# oracle_dag = circuit_to_dag(oracle_circuit)
-# # dag_drawer(grover_dag)
-# print("Q:")
-# # dag_drawer(oracle_dag)
-# print("DEPTH:", grover_dag.depth())
-# print("NUM_QUBITS:", grover_dag.num_qubits())
-# result = algorithm.run(backend)
-# print(result["result"])
-# print(result)
-#
-#
+if __name__ == "__main__":
+    main()
