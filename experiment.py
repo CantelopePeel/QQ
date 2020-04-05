@@ -111,9 +111,9 @@ def experiments():
                         coupling_graph = load_coupling_graph("./experiment_graph.csv")
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
 
-                        qq_command = "./qq.py --input-circuit=./experiment_prog.qprog " \
-                                     "--coupling-graph=../qprogs/experiment_graph.csv --log-level=INFO " \
-                                     "--log-file=../log/qq.log --num-solver-qubits={} "
+                        qq_command = "python ./qq.py --input-circuit=./experiment_prog.qprog " \
+                                     "--coupling-graph=./experiment_graph.csv --log-level=INFO " \
+                                     "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
                         subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
                         experiment_data_map = get_experiment_data()
 
