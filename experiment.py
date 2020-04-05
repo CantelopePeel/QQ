@@ -36,7 +36,7 @@ qreg q[{}];
             qubit1 = random.randrange(0, num_qubits)
             while qubit1 == qubit0:
                 qubit1 = random.randrange(0, num_qubits)
-            prog_str += "cx q[{}] q[{}];\n".format(qubit0, qubit1)
+            prog_str += "cx q[{}],q[{}];\n".format(qubit0, qubit1)
     return prog_str
 
 
