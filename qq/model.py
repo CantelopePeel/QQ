@@ -426,7 +426,7 @@ def run_solver(solver_state: bytes):
             assignment_file.write("{} ".format(lit))
 
     num_iterations = 2**(clause_list.num_variables() - 1)
-    sim_command = "../qq_sim/cmake-build-debug/qq_sim ./dimacs.txt {} {} a a".format(num_iterations, num_solver_qubits)
+    sim_command = "../qq_sim/build/qq_sim ./dimacs.txt {} {} a a".format(num_iterations, num_solver_qubits)
     sim_command_output = subprocess.check_output(sim_command, shell=True).decode('unicode_escape')
     sim_output, sim_debug_output, _ = sim_command_output.split('\n')
     sim_output = sim_output.strip()
