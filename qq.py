@@ -3,8 +3,9 @@ import argparse
 import csv
 import logging
 
-from qiskit import QuantumCircuit
-from qiskit.transpiler import CouplingMap
+from qiskit.circuit.quantumcircuit import QuantumCircuit
+from qiskit.transpiler.coupling import CouplingMap
+from z3 import enable_trace
 
 import qq.model
 
@@ -23,6 +24,14 @@ def parse_arguments():
     argparser.add_argument('-l', '--log-level', dest='log_level', default='INFO', choices=levels, type=str,
                            help='Log level of output to console.')
     argparser.add_argument('-lf', '--log-file', dest='log_file', nargs='?', type=str)
+
+
+    argparser.add_argument('-o', '--output-circuit', required=False, dest='output_circuit', type=str,
+                           help='The filename of the output circuit.')
+
+    argparser.add_argument('-n', '--num-solver-qubits', required=False, default=0, dest='num_solver_qubits', type=int,
+                           help='The number of solver qubits to allocate')
+
 
     # Parsing arguments.
     args = argparser.parse_args()
@@ -69,6 +78,9 @@ def load_coupling_graph(coupling_graph_file_path):
 def qq_main():
     # Parse arguments
     args = parse_arguments()
+    if args.log_level in ("DEBUG"):
+        enable_trace('qq')
+        # enable_trace('qq_sat_assign')
 
     logger = config_logging(args.log_level, args.log_file)
     logger.info("QQ: Self-Hosted Quantum Program Compiler.")
@@ -79,8 +91,46 @@ def qq_main():
     coupling_graph = load_coupling_graph(args.coupling_graph)
     logger.info("Loaded coupling graph: {}".format(args.coupling_graph))
 
-    qq.model.construct_model(input_circuit, coupling_graph)
+    max_circuit_time = 10
+    max_swaps_addable = 10
 
+    best_circuit_time = max_circuit_time
+    best_swaps_addable = max_swaps_addable
+    best_result_circuit = None
+
+    with open('./experiment_info.dat', 'w') as experiment_info_file:
+        pass
+
+    for circuit_time in range(max_circuit_time, 0, -1):
+        print("Circuit time:", circuit_time)
+        result_circuit = qq.model.construct_model(input_circuit, coupling_graph, args.num_solver_qubits,
+                                                  max_circuit_time=circuit_time,
+                                                  max_swaps_addable=best_swaps_addable)
+        if result_circuit is None:
+            best_circuit_time = max_circuit_time + 1
+
+            break
+
+    for swaps_addable in range(max_swaps_addable, 0, -1):
+        print("Swaps addable:", swaps_addable)
+        result_circuit = qq.model.construct_model(input_circuit, coupling_graph, args.num_solver_qubits,
+                                                  max_circuit_time=best_circuit_time, max_swaps_addable=swaps_addable)
+        if result_circuit is None:
+            best_swaps_addable = best_swaps_addable + 1
+            break
+        best_result_circuit = result_circuit
+
+    result_qasm = best_result_circuit.qasm()
+    if args.output_circuit is not None:
+        with open(args.output_circuit, 'w') as output_circuit_file:
+            output_circuit_file.write(result_qasm + "\n")
+    else:
+        logger.info("Resulting program:\n%s", result_qasm)
+
+    with open('./experiment_info.dat', 'a') as experiment_info_file:
+        experiment_info_file.write("Opt_Depth: {}\n".format(best_result_circuit.depth()))
+        experiment_info_file.write("Opt_Ops: {}\n".format(best_result_circuit.count_ops()))
+    return
 
 if __name__ == "__main__":
     qq_main()

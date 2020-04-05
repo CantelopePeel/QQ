@@ -93,7 +93,7 @@ def variable_swap_gate_insertion(model_input: ModelInput):
         for layer_index in range(num_swap_layers_per_node):
             swap_gate_insertions_for_node_for_layer = dict()
             for coupling in undirected_couplings:
-                swap_gate_insertions_for_node_for_layer[coupling] = Bool('swap_gate_insertion__{}_{}_{}_{}'.format(
+                swap_gate_insertions_for_node_for_layer[coupling] = Int('swap_gate_insertion__{}_{}_{}_{}'.format(
                     node_index, layer_index, coupling[0], coupling[1]))
             swap_gate_insertions_for_node[layer_index] = swap_gate_insertions_for_node_for_layer
         swap_gate_insertions[node] = swap_gate_insertions_for_node

@@ -9,15 +9,16 @@ from qiskit.circuit import Gate
 from qiskit.dagcircuit import DAGCircuit
 from qiskit.transpiler import CouplingMap
 
-# Generates couplings in the coupling map (which is directed) that are undirected. Useful for determining if we can
-# perform a swap on two qubits.
+
 from qq.assignment import Clause
 from qq.clause import *
-from qq.parallel_cnf_circuit import CNFParallel
+# from qq.parallel_cnf_circuit import CNFParallel
 
 logger = logging.getLogger(__name__)
 
 
+# Generates couplings in the coupling map (which is directed) that are undirected. Useful for determining if we can
+# perform a swap on two qubits.
 def get_undirected_couplings(coupling_map: CouplingMap):
     couplings = coupling_map.get_edges()
     for coupling in couplings:
@@ -152,11 +153,11 @@ def get_num_variables(cnf_content):
     return num_variables
 
 
-def initialize_oracle(ast, num_vars):
-    oracle = LogicalExpressionOracle("v0 & v1", mct_mode='basic')
-    oracle._circuit = None
-    oracle._nf = CNFParallel(ast, num_vars=num_vars)
-    return oracle
+# def initialize_oracle(ast, num_vars):
+#     oracle = LogicalExpressionOracle("v0 & v1", mct_mode='basic')
+#     oracle._circuit = None
+#     oracle._nf = CNFParallel(ast, num_vars=num_vars)
+#     return oracle
 
 
 # Helper form DIMACS stats function.
@@ -170,57 +171,7 @@ def combine_counts(counts0: Dict, counts1: Dict):
 
 
 def print_clause_stats(clause_list: ClauseList, extended_info: bool = False):
-    stats_content = ""
-    all_variables = {abs(literal) for clause in clause_list for literal in clause}
-    num_variables = len(all_variables)
-    num_clauses = len(clause_list)
-    stats_content += "Clauses info:\n"
-    stats_content += ("  Num variables: {}\n".format(num_variables))
-    stats_content += ("  Num clauses: {}\n".format(num_clauses))
-
-    clause_values = []
-    for clause in clause_list:
-        clause_value = [int(literal) for literal in clause]
-        clause_values.append(clause_value)
-
-    # Clause length.
-    clause_lengths = [len(clause_value) for clause_value in clause_values]
-    clause_lengths_agg_map = map(lambda l: {l: 1}, clause_lengths)
-    clause_lengths_agg_reduce = reduce(lambda l0, l1: combine_counts(l0, l1), clause_lengths_agg_map)
-
-    avg_clause_length = sum(clause_lengths) / len(clause_lengths)
-    min_clause_length = min(clause_lengths)
-    max_clause_length = max(clause_lengths)
-    stats_content += ("  Avg. clause len: {}\n".format(avg_clause_length))
-    stats_content += ("  Min. clause len: {}\n".format(min_clause_length))
-    stats_content += ("  Max. clause len: {}\n".format(max_clause_length))
-
-    if extended_info:
-        for i in range(min_clause_length, max_clause_length + 1):
-            if i in clause_lengths_agg_reduce.keys():
-                num_clauses = clause_lengths_agg_reduce[i]
-                stats_content += ("  Len {} clauses: {}\n".format(i, num_clauses))
-
-    # Variable occurrence.
-    flat_clause_values = [abs(value) for clause in clause_values for value in clause]
-    variable_values = map(lambda v: abs(v), flat_clause_values)
-    variable_occurrences_map = map(lambda v: {v: 1}, variable_values)
-    # variable_occurrences_reduce = reduce(lambda v0, v1: combine_counts(v0, v1), variable_occurrences_map, {})
-    variable_occurrences_dict = dict(Counter(flat_clause_values))
-    occurrence_agg_counts = dict(Counter(variable_occurrences_dict.values()))
-    avg_var_occ = sum(variable_occurrences_dict.values()) / num_variables
-    min_var_occ = min(variable_occurrences_dict.values())
-    max_var_occ = max(variable_occurrences_dict.values())
-    stats_content += ("  Avg. vars occ: {}\n".format(avg_var_occ))
-    stats_content += ("  Min. vars occ: {}\n".format(min_var_occ))
-    stats_content += ("  Max. vars occ: {}\n".format(max_var_occ))
-
-    if extended_info:
-        for i in range(min_var_occ, max_var_occ + 1):
-            if i in occurrence_agg_counts.keys():
-                num_clauses = occurrence_agg_counts[i]
-                stats_content += ("  Occ {} vars: {}\n".format(i, num_clauses))
-    logger.debug(stats_content[:-1])
+    print_dimacs_stats(clause_list.to_dimacs(), extended_info)
 
 
 # Print info about DIMACS CNF representation of the model.
@@ -247,39 +198,40 @@ def print_dimacs_stats(cnf_content: str, extended_info: bool = False):
     # Clause length.
     clause_lengths = [len(clause_value) for clause_value in clause_values]
     clause_lengths_agg_map = map(lambda l: {l: 1}, clause_lengths)
-    clause_lengths_agg_reduce = reduce(lambda l0, l1: combine_counts(l0, l1), clause_lengths_agg_map)
+    clause_lengths_agg_reduce = reduce(lambda l0, l1: combine_counts(l0, l1), clause_lengths_agg_map, {})
 
-    avg_clause_length = sum(clause_lengths) / len(clause_lengths)
-    min_clause_length = min(clause_lengths)
-    max_clause_length = max(clause_lengths)
-    stats_content += ("  Avg. clause len: {}\n".format(avg_clause_length))
-    stats_content += ("  Min. clause len: {}\n".format(min_clause_length))
-    stats_content += ("  Max. clause len: {}\n".format(max_clause_length))
+    if num_clauses > 0:
+        # avg_clause_length = sum(clause_lengths) / len(clause_lengths)
+        min_clause_length = min(clause_lengths)
+        max_clause_length = max(clause_lengths)
+        # stats_content += ("  Avg. clause len: {}\n".format(avg_clause_length))
+        stats_content += ("  Min. clause len: {}\n".format(min_clause_length))
+        stats_content += ("  Max. clause len: {}\n".format(max_clause_length))
 
-    if extended_info:
-        for i in range(min_clause_length, max_clause_length + 1):
-            if i in clause_lengths_agg_reduce.keys():
-                num_clauses = clause_lengths_agg_reduce[i]
-                stats_content += ("  Len {} clauses: {}\n".format(i, num_clauses))
+        if extended_info:
+            for i in range(min_clause_length, max_clause_length + 1):
+                if i in clause_lengths_agg_reduce.keys():
+                    num_clauses = clause_lengths_agg_reduce[i]
+                    stats_content += ("  Len {} clauses: {}\n".format(i, num_clauses))
 
-    # Variable occurrence.
-    flat_clause_values = [abs(value) for clause in clause_values for value in clause]
-    variable_values = map(lambda v: abs(v), flat_clause_values)
-    variable_occurrences_dict = dict(Counter(flat_clause_values))
-    occurrence_agg_counts = dict(Counter(variable_occurrences_dict.values()))
-    avg_var_occ = sum(variable_occurrences_dict.values()) / num_variables
-    min_var_occ = min(variable_occurrences_dict.values())
-    max_var_occ = max(variable_occurrences_dict.values())
-    stats_content += ("  Avg. vars occ: {}\n".format(avg_var_occ))
-    stats_content += ("  Min. vars occ: {}\n".format(min_var_occ))
-    stats_content += ("  Max. vars occ: {}\n".format(max_var_occ))
+        # Variable occurrence.
+        flat_clause_values = [abs(value) for clause in clause_values for value in clause]
+        variable_values = map(lambda v: abs(v), flat_clause_values)
+        variable_occurrences_dict = dict(Counter(flat_clause_values))
+        occurrence_agg_counts = dict(Counter(variable_occurrences_dict.values()))
+        avg_var_occ = sum(variable_occurrences_dict.values()) / num_variables
+        min_var_occ = min(variable_occurrences_dict.values())
+        max_var_occ = max(variable_occurrences_dict.values())
+        stats_content += ("  Avg. vars occ: {}\n".format(avg_var_occ))
+        stats_content += ("  Min. vars occ: {}\n".format(min_var_occ))
+        stats_content += ("  Max. vars occ: {}\n".format(max_var_occ))
 
-    if extended_info:
-        for i in range(min_var_occ, max_var_occ + 1):
-            if i in occurrence_agg_counts.keys():
-                num_clauses = occurrence_agg_counts[i]
-                stats_content += ("  Occ {} vars: {}\n".format(i, num_clauses))
-    logger.debug(stats_content[:-1])
+        if extended_info:
+            for i in range(min_var_occ, max_var_occ + 1):
+                if i in occurrence_agg_counts.keys():
+                    num_clauses = occurrence_agg_counts[i]
+                    stats_content += ("  Occ {} vars: {}\n".format(i, num_clauses))
+        logger.debug(stats_content[:-1])
 
 
 def topological_gate_nodes(circuit: DAGCircuit):

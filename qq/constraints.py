@@ -62,7 +62,7 @@ def constrain_gate_ends_before_end_time(model_input: ModelInput, model_variables
         # TODO change method name now that it has two functions. Or move this into own function
         for layer, coupling_vars in swap_gate_insertions[node].items():
             for coupling, swap_node_exists in coupling_vars.items():
-                goal.add(Implies(swap_node_exists,
+                goal.add(Implies(swap_node_exists == 1,
                                  gate_start_times[node][coupling[0]] == gate_start_times[node][coupling[1]]))
     return goal
 
@@ -106,7 +106,7 @@ def constrain_swap_qubit_mapping(model_input: ModelInput, model_variables: Model
 
             # Permute qubit mapping when a swap is to be inserted between a coupling.
             for coupling in swap_layer_gate_insertion:
-                goal.add(Implies(swap_layer_gate_insertion[coupling],
+                goal.add(Implies(swap_layer_gate_insertion[coupling] == 1,
                                  And(prior_mapping[coupling[0]] == swap_layer_qubit_mapping[coupling[1]],
                                      prior_mapping[coupling[1]] == swap_layer_qubit_mapping[coupling[0]])))
 
@@ -114,11 +114,11 @@ def constrain_swap_qubit_mapping(model_input: ModelInput, model_variables: Model
             for coupling in swap_layer_gate_insertion:
                 for other_coupling in swap_layer_gate_insertion:
                     if coupling != other_coupling:
-                        goal.add(Not(And(swap_layer_gate_insertion[coupling],
-                                         swap_layer_gate_insertion[other_coupling])))
+                        goal.add(Not(And(swap_layer_gate_insertion[coupling] == 1,
+                                         swap_layer_gate_insertion[other_coupling] == 1)))
 
             # Ensure that if there are no swaps in the layer, that mapping is still constrained.
-            goal.add(Implies(Not(Or([swap_gate_exists for swap_gate_exists in swap_layer_gate_insertion.values()])),
+            goal.add(Implies(Not(Or([swap_gate_exists == 1 for swap_gate_exists in swap_layer_gate_insertion.values()])),
                              And([prior_mapping[physical_qubit] == swap_layer_qubit_mapping[physical_qubit]
                                   for physical_qubit in range(num_physical_qubits)])))
             prior_mapping = swap_layer_qubit_mapping
@@ -194,7 +194,7 @@ def constrain_swap_gate_duration(model_input: ModelInput, model_variables: Model
                 for coupling in swap_layer_gate_insertion:
                     if physical_qubit in coupling:
                         swap_node_exists = swap_layer_gate_insertion[coupling]
-                        duration_list.append(If(swap_node_exists, 1, 0))
+                        duration_list.append(swap_node_exists)
             goal.add(swap_gate_qubit_duration == Sum(duration_list))
     return goal
 
@@ -290,15 +290,18 @@ def constrain_swaps_added(model_input: ModelInput, model_variables: ModelVariabl
         num_swap_layers = len(undirected_couplings)
         max_swaps_addable = (num_swap_layers * len(list(topological_gate_nodes(model_input.circuit))))
 
-    goal.add(swaps_added == max_swaps_addable)
+    goal.add(swaps_added <= max_swaps_addable)
 
     swap_gate_exists_list = [swap_gate_insertions[node][layer][coupling]
                              for node in swap_gate_insertions
                              for layer in swap_gate_insertions[node]
                              for coupling in swap_gate_insertions[node][layer]]
+    for swap_gate_exists in swap_gate_exists_list:
+        goal.add(Or(swap_gate_exists == 0,
+                    swap_gate_exists == 1))
     # swap_gate_counts = [If(swap_gate_exists, 1, 0) for swap_gate_exists in swap_gate_exists_list]
     # goal.add(swaps_added >= Sum(swap_gate_counts))
-    swap_gate_exists_pb_list = [(swap_gate_exists, 1) for swap_gate_exists in swap_gate_exists_list]
+    swap_gate_exists_pb_list = [(swap_gate_exists == 1, 1) for swap_gate_exists in swap_gate_exists_list]
     swap_gate_count_constraint = PbLe(swap_gate_exists_pb_list, max_swaps_addable)
     goal.add(swap_gate_count_constraint)
 

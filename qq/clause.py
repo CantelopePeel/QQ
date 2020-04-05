@@ -6,7 +6,7 @@ from z3 import *
 
 def Clause(init_literals=None):
     if init_literals is None:
-        init_literals = {}
+        init_literals = set()
     clause_type = NewType('Clause', Set[int])
     return clause_type(init_literals)
 
@@ -19,26 +19,36 @@ class ClauseList:
         self.clause_list = []
         self.var_names = dict()
 
-    def add_clause(self, clause: Clause):
+    def add_clause(self, clause: Clause, make_names: bool = False, skip_literal_loop=False):
         self.clause_list.append(clause)
-        for literal in clause:
-            variable = abs(literal)
-            self.var_names.setdefault(variable, None)
+        if not skip_literal_loop:
+            for literal in clause:
+                variable = abs(literal)
+                self.var_names.setdefault(variable, None)
+                if make_names:
+                    self.var_names[variable] = "var_{}".format(variable)
 
-    def load_from_dimacs(self, dimacs_content: str):
+    def bulk_add_variable_names(self):
+        for clause in self.clause_list:
+            for literal in clause:
+                variable = abs(literal)
+                self.var_names[variable] = "var_{}".format(variable)
+
+    def load_from_dimacs(self, dimacs_content: str, make_names: bool = False, show_progress: bool = False):
         dimacs_lines = dimacs_content.splitlines()
-        for line in dimacs_lines:
+
+        for line in tqdm.tqdm(dimacs_lines, desc="Loading DIMACS", disable=not show_progress):
             line_start_char = line[0]
             if line_start_char == 'c':
                 comment_info = line.split(' ')
                 var_num = int(comment_info[1])
                 var_name = comment_info[2]
                 self.set_variable_name(var_num, var_name)
-            elif line_start_char == 'p':
-                pass
             elif line_start_char.isdigit() or line_start_char == '-':
                 clause = Clause({int(literal) for literal in line.split(' ')[:-1]})
-                self.add_clause(clause)
+                self.add_clause(clause, make_names=make_names)
+            elif line_start_char == 'p':
+                pass
             else:
                 raise RuntimeError("Unexpected character at start of DIMACS line.")
 
@@ -57,9 +67,9 @@ class ClauseList:
 
     def fix_non_consecutive_vars(self):
         ordered_var_nums = sorted(self.variables())
-        consec_var_num_map = {var: consec_var for consec_var, var in zip(enumerate(ordered_var_nums, start=1))}
+        consec_var_num_map = {var: consec_var for consec_var, var in enumerate(ordered_var_nums, start=1)}
 
-        new_var_names = {consec_var_num_map[var_num]: var_name for var_num, var_name in self.var_names}
+        new_var_names = {consec_var_num_map[var_num]: var_name for var_num, var_name in self.var_names.items()}
         new_clause_list = []
         for clause in self.clause_list:
             new_clause = Clause()

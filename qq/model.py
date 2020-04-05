@@ -1,17 +1,19 @@
-from typing import Optional, Tuple
+import subprocess
+from typing import Tuple
 
-from networkx.algorithms import hybrid
-from qiskit import QuantumCircuit, QuantumRegister
+from qiskit.circuit.quantumcircuit import QuantumCircuit
+from qiskit.circuit.quantumregister import QuantumRegister
 from qiskit.converters import circuit_to_dag, dag_to_circuit
-from qiskit.extensions import SwapGate
+from qiskit.extensions.standard.swap import SwapGate
 from qiskit.transpiler import PassManager
 from qiskit.transpiler.layout import Layout
 from qiskit.transpiler.passes import ApplyLayout, SetLayout
 
-from qq.assignment import Assignment, unit_propagation, clause_subsumption, hybrid_schoning_solver
+from qq.assignment import Assignment, unit_propagation, clause_subsumption, pure_literal_elimination, \
+    clause_subsumption_new, validate_clauses_and_assignment, AssignmentValue
 from qq.constraints import *
-from qq.scratch.cube_and_conquer import cube_and_conquer
-from qq.sexpr_parser import *
+from qq.sexpr_parser import build_variable_eval_order_list, rename_var, build_eval_dict, build_eval_code_block, \
+    run_eval_code_block, parse_sexpr, drop_asserts_sexpr_file
 from qq.util import *
 from qq.variables import *
 
@@ -51,6 +53,8 @@ def generate_model_variables(model_input: ModelInput) -> ModelVariables:
         logger.debug("Variables: %s", var_name)
         model_variables[var_name] = var_values
 
+    # print(model_variables)
+
     return model_variables
 
 
@@ -73,8 +77,7 @@ def generate_model_constraints(model_input: ModelInput, model_variables: ModelVa
     for con_func in constraint_generator_funcs:
         constraint_goal = con_func(model_input, model_variables)
         model_constraints.add(*constraint_goal)
-        logger.debug(con_func.__name__)
-        logger.debug(constraint_goal)
+        logger.debug("Generated constraints: %s", con_func.__name__)
 
     logger.debug("Total constraints generated: {}".format(len(model_constraints)))
     return model_constraints
@@ -166,28 +169,31 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
     max_swaps_addable = model_input.parameters.max_swaps_addable
     circuit = model_input.circuit
 
-    model_decls_map = {decl.name(): model[decl] for decl in model.decls()}
+    model = {decl.name(): model[decl].as_long() for decl in model.decls()}
 
-    logger.debug("NUM VARS: {}".format(len(model_decls_map)))
+    # for name, decl in model.items():
+    #     print(name, decl)
+
+    logger.debug("NUM VARS: {}".format(len(model)))
 
     times = {}
-    for key, value in model_decls_map.items():
+    for key, value in model.items():
         if 'time' in key:
-            times[key] = value.as_long()
+            times[key] = value
 
     for key, value in sorted(times.items(), key=lambda a: a[0]):
         logger.debug("TIMES: {} {}".format(key, value))
 
     durs = {}
-    for key, value in model_decls_map.items():
+    for key, value in model.items():
         if 'duration' in key:
-            durs[key] = value.as_long()
+            durs[key] = value
 
     for key, value in sorted(durs.items(), key=lambda a: a[0]):
         logger.debug("DURS: {} {}".format(key, value))
 
     ins = {}
-    for key, value in model_decls_map.items():
+    for key, value in model.items():
         if 'insertion' in key:
             ins[key] = is_true(value)
 
@@ -201,11 +207,12 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
     canonical_register = circuit.qregs['q']
     trivial_layout = Layout.generate_trivial_layout(canonical_register)
     current_layout = trivial_layout.copy()
+    # print(current_layout, ":::", trivial_layout)
 
     # First fix the initial layout of circuit by setting the layout to the model's inferred input layout.
     for physical_qubit in canonical_register:
         input_qubit_map_decl_name = ("input_qubit_mapping__%d" % physical_qubit.index)
-        input_virtual_qubit = model_decls_map[input_qubit_map_decl_name].as_long()
+        input_virtual_qubit = model[input_qubit_map_decl_name]
 
         # If the virtual qubit is non-negative, it is an actual virtual qubit. Otherwise, the number in
         # input_virtual_qubit is negative and is not used by a virtual qubit. We map this "fake" virtual qubit to some
@@ -242,10 +249,11 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
                 for coupling in undirected_couplings:
                     swap_gate_decl_name = ("swap_gate_insertion__%d_%d_%d_%d" % (node_index, swap_layer_index,
                                                                                  coupling[0], coupling[1]))
-                    swap_gate_exists = is_true(model_decls_map[swap_gate_decl_name])
+                    swap_gate_exists = model[swap_gate_decl_name]
+                    # print(current_layout, ":::", trivial_layout)
 
                     # Actually make a swap layer if a swap gate exists.
-                    if swap_gate_exists:
+                    if swap_gate_exists != 0:
                         logger.debug("CST: SWP IDX/CPL: {} {}".format(swap_layer_index, coupling))
 
                         swap_layer = DAGCircuit()
@@ -263,7 +271,7 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
             # Set the layout as it would be input into gate.
             for qubit in canonical_register:
                 gate_qubit_map_decl_name = ("gate_qubit_mapping__%d_%d" % (node_index, qubit.index))
-                gate_virtual_qubit = model_decls_map[gate_qubit_map_decl_name].as_long()
+                gate_virtual_qubit = model[gate_qubit_map_decl_name]
 
                 # See above comment for why we do this:
                 # if gate_virtual_qubit >= 0:
@@ -283,8 +291,8 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
         new_dag.extend_back(sub_dag, edge_map)
         logger.debug("CST DAG: {} \n{}".format(node_index - 1, dag_to_circuit(new_dag).draw()))
 
-    logger.debug('CIRC_END_TIME: {}'.format(model_decls_map['circuit_end_time']))
-    logger.debug('SWAPS_ADDED: {}'.format(model_decls_map['swaps_added']))
+    logger.debug('CIRC_END_TIME: {}'.format(model['circuit_end_time']))
+    logger.debug('SWAPS_ADDED: {}'.format(model['swaps_added']))
     logger.debug('CIRC_DEPTH: {}'.format(new_dag.depth()))
 
     return new_dag, init_layout
@@ -292,110 +300,29 @@ def construct_circuit_from_model(model: ModelRef, model_input: ModelInput):
 
 # Turns a finite domain goal into a k-SAT goal.
 def transform_goal_to_cnf(goal: Goal, max_clause_size: int = 3):
-    # fd_solver = SolverFor('QF_FD')
-    # fd_solver.set('max_conflicts', 0)
-    # simplify_tactic = With('simplify',
-    #                        som=True,
-    #                        pull_cheap_ite=True,
-    #                        push_ite_bv=False,
-    #                        local_ctx=True,
-    #                        local_ctx_limit=10_000_000,
-    #                        flat=True,
-    #                        hoist_mul=False,
-    #                        elim_and=True,
-    #                        blast_distinct=True)
-    # fd_pre_process_tactic = Then('dt2bv', 'eq2bv', 'simplify', 'propagate-values', 'card2bv', simplify_tactic,
-    #                              'max-bv-sharing',
-    #                              'bit-blast', simplify_tactic, 'sat-preprocess')
-    fd2_pre_process_tactic = Tactic('qffd')
-    # fd2_pre_process_tactic = Then('propagate-values', 'qffd')
-
-    fd_solver = Solver()
+    fd_pre_process_tactic = Tactic('qffd')
+    fd_solver = fd_pre_process_tactic.solver()
+    fd_solver.set('max_conflicts', 0)
     fd_solver.add(*goal)
-    with open("output/fd_solver_smt2.txt", "w") as smt_file:
-        smt_file.write(fd_solver.to_smt2())
+    print_dimacs_stats(fd_solver.dimacs())
 
-    fd_solver2 = fd2_pre_process_tactic.solver()
-    # fd_solver2 = fd_solver2.translate(goal.ctx)
-    fd_solver2.set('max_conflicts', 0)
-    fd_solver2.add(*goal)
+    check_solver_sat(fd_solver)
 
-    # translated_fd_solver = fd_solver.translate(main_ctx())
-    # translated_fd_goal = Goal()
-    # translated_fd_goal.add(*translated_fd_solver.assertions())
-    # preprocessed_fd_goal = fd_pre_process_tactic(translated_fd_goal)[0]
-    #
-    # logger.debug("PFG: {}".format(len(preprocessed_fd_goal)))
-    # print_dimacs_stats(preprocessed_fd_goal.dimacs())
-    logger.debug("FD2: {}".format(len(fd_solver2.assertions())))
-    print_dimacs_stats(fd_solver2.dimacs())
-    #
-    # with open("output/preproc_file_goal_ fd_dimacs.txt", "w") as preproc_file_goal_dimacs_file:
-    #     preproc_file_goal_dimacs_file.write(preprocessed_fd_goal.dimacs())
-
-    # with open("output/preproc_file_goal_fd.txt", "w") as preproc_file_goal_fd_file:
-    #     for assertion in tqdm.tqdm(preprocessed_fd_goal):
-    #         preproc_file_goal_fd_file.write(str(assertion) + '\n')
-    #         preproc_file_goal_fd_file.flush()
-
-    # preprocessed_fd_solver = SolverFor('QF_FD')
-    # # preprocessed_fd_solver.set('max_conflicts', 100000)
-    # preprocessed_fd_solver.add(*preprocessed_fd_goal)
-    #
-    # with open("output/smt2_file_preproc_goal_fd.txt", "w") as smt2_fd_goal_file:
-    #     smt2_fd_goal_file.write(fd_solver.to_smt2())
-    #
-    # logger.debug("TRANSFORM: {} {} {} {}".format(len(fd_solver.assertions()), len(translated_fd_solver.assertions()),
-    #                                              len(preprocessed_fd_solver.assertions()),
-    #                                              len(fd_solver2.assertions())))
-
-    # check_solver_sat(fd_solver)
-    check_solver_sat(fd_solver2)
-    # check_solver_sat(preprocessed_fd_solver)
-
-    # with open("output/fd_solver_dimacs.txt", "w") as goal_dimacs_file:
-    #     goal_dimacs_file.write(fd_solver.dimacs())
-    #
-    # with open("output/fd_solver_sexpr.txt", "w") as smt2_fd_goal_file:
-    #     smt2_fd_goal_file.write(fd_solver.sexpr())
-    #
-    # with open("output/fd_solver_smt2.txt", "w") as smt2_fd_goal_file:
-    # #     smt2_fd_goal_file.write(fd_solver.to_smt2())
-    with open("output/fd_solver2_dimacs.txt", "w") as goal_dimacs_file:
-        goal_dimacs_file.write(fd_solver2.dimacs())
-    # with open("output/fd_solver2_sexpr.txt", "w") as smt2_fd_goal_file:
-    #     smt2_fd_goal_file.write(fd_solver2.sexpr())
-    # with open("output/fd_solver2_smt2.txt", "w") as smt2_fd_goal_file:
-    #     smt2_fd_goal_file.write(fd_solver2.to_smt2())
-
-    logger.debug("WRT OUT")
-
-    # logger.debug("SAT ASSERTS:".format(len(fd_solver.assertions()), len(preprocessed_fd_solver.assertions()),
-    #                                    len(fd_solver2.assertions())))
-
-    logger.debug("FD_STATS2:")
-    print_dimacs_stats(fd_solver2.dimacs(), extended_info=True)
-    logger.debug(fd_solver2.statistics())
+    logger.debug("FD_STATS:")
+    print_dimacs_stats(fd_solver.dimacs(), extended_info=True)
+    logger.debug(fd_solver.statistics())
 
     sat_preproc_goal = Goal()
-    # sat_preproc_goal.append(fd_solver.assertions())
-    sat_preproc_goal.append(fd_solver2.assertions())
-    with open("output/sat_preproc_goal_sepxr.txt", "w") as goal_dimacs_file:
-        goal_dimacs_file.write(sat_preproc_goal.sexpr())
+    sat_preproc_goal.append(fd_solver.assertions())
 
-    # preproc_goal = strip_unit_clauses(sat_preproc_goal)
-    # kcnf_sat_goal = kcnf_split_clauses(sat_preproc_goal, max_clause_length=max_clause_size)
-    # kcnf_sat_goal = split_expr_clauses(sat_preproc_goal, max_clause_length=max_clause_size)
     sat_preproc_clause_list = ClauseList()
-    sat_preproc_clause_list.load_from_dimacs(sat_preproc_goal.dimacs())
+    sat_preproc_clause_list.load_from_dimacs(sat_preproc_goal.dimacs(), show_progress=True)
     kcnf_clause_list = split_clauses_in_clause_list(sat_preproc_clause_list, max_clause_length=max_clause_size)
 
     logger.debug("KCNF_STATS:")
     print_clause_stats(kcnf_clause_list)
-    #print_dimacs_stats(kcnf_sat_goal.dimacs(), extended_info=True)
-    # print(kcnf_sat_goal)
 
-    kcnf_sat_sexpr = fd_solver2.sexpr()
+    kcnf_sat_sexpr = fd_solver.sexpr()
     return sat_preproc_goal, kcnf_sat_sexpr, kcnf_clause_list
 
 
@@ -430,8 +357,125 @@ def quantum_kcnf_solver(goal: Goal):
     return assignment
 
 
+def check_solver_capable(num_vars, num_clauses) -> bool:
+    if num_vars <= 100:
+        logger.debug("CCC: V: {} C: {}".format(num_vars, num_clauses))
+        return True
+    else:
+        return False
+
+
+num_solver_qubits = 0
+
+
+def run_solver(solver_state: bytes):
+    state_str = solver_state.decode('unicode_escape')
+
+    with open('./state_dimacs.txt', 'w') as dimacs_file:
+        dimacs_file.write(state_str)
+
+    clause_list = ClauseList()
+    clause_list.load_from_dimacs(state_str, make_names=True)
+    assignment = Assignment()
+
+    unit_prop_result = unit_propagation(clause_list, assignment, num_levels=1, limit_remaining_items=-1)
+    if unit_prop_result is None:
+        return b"none"
+    clause_list, assignment = unit_prop_result
+    # print_clause_stats(clause_list)
+
+    assignment_clauses = []
+    print("Vs:", clause_list.num_variables(), clause_list.num_clauses(), clause_list.num_variables() + clause_list.num_clauses() )
+    # TODO remove if unneeded.
+    # for var in clause_list.variables():
+    #     if var in assignment:
+    #         print("V:", var)
+    #         lit = var if assignment[var] == AssignmentValue.TRUE else -var
+    #         assignment_clauses.append(Clause({lit}))
+    # for assignment_clause in assignment_clauses:
+    #     print("AC:", assignment_clause)
+    #     clause_list.add_clause(assignment_clause, make_names=True)
+
+    # # TODO: Optimize this process
+    # while clause_list.num_variables() + clause_list.num_clauses() >= 40:
+    #     logger.info("A: %s %s %s", str(validate_clauses_and_assignment(clause_list, assignment)), str(clause_list.num_variables()), str(clause_list.num_clauses()))
+    #     # elim_clause_list, assignment = pure_literal_elimination(clause_list, assignment)
+    #     # logger.info("B: %s %s", str(elim_clause_list.num_variables()), str(elim_clause_list.num_clauses()))
+    #     prop_clause_list, assignment = unit_propagation(clause_list, assignment)
+    #     logger.info("C: %s %s %s", str(validate_clauses_and_assignment(prop_clause_list, assignment)), str(prop_clause_list.num_variables()), str(prop_clause_list.num_clauses()))
+    #     sub_clause_list = clause_subsumption_new(prop_clause_list)
+    #     clause_list = sub_clause_list
+    #     logger.info("D: %s %s %s", str(validate_clauses_and_assignment(clause_list, assignment)), str(clause_list.num_variables()), str(clause_list.num_clauses()))
+
+    if clause_list.num_variables() == 0:
+        return b"none"
+    if clause_list.num_variables() + clause_list.num_clauses() > num_solver_qubits - 1:
+        return b"none"
+
+    clause_list.fix_non_consecutive_vars()
+
+    print_clause_stats(clause_list)
+    sat_cnf = clause_list.to_dimacs()
+    print(sat_cnf)
+    with open('./dimacs.txt', 'w') as dimacs_file:
+        dimacs_file.write(sat_cnf)
+
+    with open('./assignment.txt', 'w') as assignment_file:
+        for var, val in assignment.items():
+            lit = var if val == AssignmentValue.TRUE else -var
+            assignment_file.write("{} ".format(lit))
+
+    num_iterations = 2**(clause_list.num_variables() - 1)
+    sim_command = "../qq_sim/cmake-build-debug/qq_sim ./dimacs.txt {} {} a a".format(num_iterations, num_solver_qubits)
+    sim_command_output = subprocess.check_output(sim_command, shell=True).decode('unicode_escape')
+    sim_output, sim_debug_output, _ = sim_command_output.split('\n')
+    sim_output = sim_output.strip()
+
+    sim_result = b"undef"
+    if sim_output == "none":
+        sim_result = b"none"
+    else:
+        remap_output = ""
+        lits = [int(l) for l in sim_output.split(' ')]
+        for lit in lits:
+            var = int(clause_list.get_variable_name(abs(lit)).split('_')[1])
+            sign = 1 if lit > 0 else -1
+            remap_output += str(var*sign) + " "
+        sim_result = bytes(remap_output, 'unicode_escape')
+        with open('./experiment_info.dat', 'a') as experiment_info_file:
+            experiment_info_file.write(sim_debug_output+"\n")
+    return sim_result
+
+
+callback_refs = []
+
+
+def optimize_circ(goal: Goal, model_input):
+    optimizer = setup_optimizer(goal)
+
+    logger.debug("OPT CHECK: %s", optimizer.check())
+
+    opt_model = optimizer.model()
+    logger.debug(optimizer.statistics())
+    logger.debug("OPT MODEL DONE")
+    opt_dag, init_layout = construct_circuit_from_model(opt_model, model_input)
+    opt_circ = dag_to_circuit(opt_dag)
+
+    logger.debug(opt_circ.draw())
+
+
 # TODO write test routines to ensure the output of the circuit is the same as for original.
-def construct_model(input_circuit: QuantumCircuit, input_coupling_graph: CouplingMap):
+def construct_model(input_circuit: QuantumCircuit, input_coupling_graph: CouplingMap,
+                    solver_qubits: int = 0, max_swaps_addable=10, max_circuit_time=10):
+    global num_solver_qubits
+    num_solver_qubits = solver_qubits
+
+    check_callback_ref = Z3_set_quantum_solver_check_capable_callback(check_solver_capable)
+    run_callback_ref = Z3_set_quantum_solver_run_callback(run_solver)
+
+    callback_refs.append(check_callback_ref)
+    callback_refs.append(run_callback_ref)
+
     # For now, input circuit must have same qubits as coupling graph.
     # TODO: Need to change this to accept smaller input circuits.
     if input_circuit.n_qubits != input_coupling_graph.size():
@@ -447,138 +491,68 @@ def construct_model(input_circuit: QuantumCircuit, input_coupling_graph: Couplin
     logger.debug("Remap circuit QASM: \n{}".format(remap_circuit.qasm()))
 
     logger.info("Generating constraint model.")
-    max_swaps_addable = 10
-    max_circuit_time = 10
     goal, model_input = build_model(remap_circuit, input_coupling_graph, qubits_used,
                                     max_circuit_time=max_circuit_time,
                                     max_swaps_addable=max_swaps_addable)
     logger.info("Constraint model: %d constraints.", goal.size())
 
-    optimizer = setup_optimizer(goal)
-    # solver = SolverFor('QF_FD')
-    # solver.append(*goal)
-    # solver.set('lookahead.cube.depth', 1)
-    # cube_and_conquer(solver)
-
-    for i in range(0):
-        logger.debug("OPT CHECK: %s", optimizer.check())
-
-        opt_model = optimizer.model()
-        logger.debug(optimizer.statistics())
-        logger.debug("OPT MODEL DONE")
-        opt_dag, init_layout = construct_circuit_from_model(opt_model, model_input)
-        opt_circ = dag_to_circuit(opt_dag)
-
-        logger.debug(opt_circ.draw())
-
     logger.debug("KSAT PROCEDURE")
-    cnf_goal, cnf_sexpr, cnf_clause_list = transform_goal_to_cnf(goal, max_clause_size=3)
+    # cnf_goal, cnf_sexpr, cnf_clause_list = transform_goal_to_cnf(goal, max_clause_size=3)
 
-    cnf_solver = Solver()
-    cnf_solver.from_string(cnf_clause_list.to_dimacs())
-    # cnf_goal2 = Goal()
-    # cnf_goal2.append(*cnf_solver.assertions())
-    # print("PROBE1:", Probe('num-bool-consts')(cnf_goal2))
-    # partial_solve_tactic = Repeat(
-    #     Cond(Probe('num-bool-consts') > 10,
-    #          With('qffd', max_conflicts=100),
-    #          Tactic('skip')), 1000)
-    # res_goal = partial_solve_tactic.apply(cnf_goal2)
-    # print("PROBE2:", Probe('num-bool-consts')(res_goal[0]))
-    # print("PST", res_goal)
+    cnf_goal_solver = SolverFor("QF_FD")
+    cnf_goal_solver.add(goal)
 
-    cube_solver = Solver()
-    cube_solver.add(cnf_solver.assertions())
-    cube_solver.set("sat.restart.max", 100)
-    cube_solver.set("lookahead.cube.depth", 4)
+    if cnf_goal_solver.check() == sat:
+        model = cnf_goal_solver.model()
 
-    cube_and_conquer(cube_solver)
+        stats = cnf_goal_solver.statistics()
+        decisions = stats.get_key_value('sat decisions')
+        with open('./experiment_info.dat', 'a') as experiment_info_file:
+            experiment_info_file.write("SAT_Decisions: {}\n".format(decisions))
 
-    model_cnf_sexpr = drop_asserts_sexpr_file(cnf_sexpr.split('\n'))
+        opt_dag, init_layout = construct_circuit_from_model(model, model_input)
+        opt_circ = dag_to_circuit(opt_dag)
+        print(opt_circ)
+        logger.info("Model done.")
+        return opt_circ
+    else:
+        return None
 
-    # TODO: Stop. Investigate further. Consider: solver.enforce_model_conversion
-    sexpr_solver = Solver()
-    sexpr_solver.from_string(model_cnf_sexpr)
-    print(sexpr_solver.check())
-    print(sexpr_solver.model().decls())
-    with open("output/sexpr_solver_sexpr.txt", "w") as solver_file:
-        solver_file.write(sexpr_solver.model().sexpr())
+# TODO: OLD model stuff.
+#
+# cnf_solver = SolverFor('QF_FD')
+# cnf_solver.from_string(cnf_clause_list.to_dimacs())
+# cnf_solver.set('completion', True)
+# logger.info("CNF Solver: %s", str(cnf_solver.check()))
 
-    sexpr_result = parse_sexpr(model_cnf_sexpr)
-    logger.debug("CNF solver check: %s", cnf_solver.check())
+# with open("../output/sexpr_solver_sexpr2.txt", "w") as solver_file:
+#     solver_file.write(cnf_sexpr)
+# model_cnf_sexpr = drop_asserts_sexpr_file(cnf_sexpr.split('\n'))
+# with open("../output/sexpr_solver_sexpr3.txt", "w") as solver_file:
+#     solver_file.write(model_cnf_sexpr)
+#
+# sexpr_solver = Solver()
+# sexpr_solver.from_string(model_cnf_sexpr)
+#
+# print(sexpr_solver.check())
+# with open("../output/sexpr_solver_sexpr.txt", "w") as solver_file:
+#     solver_file.write(sexpr_solver.model().sexpr())
+#
+# sexpr_result = parse_sexpr(model_cnf_sexpr)
+# logger.debug("CNF solver check: %s", cnf_solver.check())
 
-    hybrid_schoning_solver(cnf_clause_list)
+# hybrid_schoning_solver(cnf_clause_list)
 
-    with open("output/cnf_solver_sexpr.txt", "w") as smt2_fd_goal_file:
-        smt2_fd_goal_file.write(cnf_solver.sexpr())
+# with open("../output/cnf_solver_sexpr.txt", "w") as smt2_fd_goal_file:
+#     smt2_fd_goal_file.write(cnf_solver.sexpr())
 
-    cnf_model = cnf_solver.model()
-    cnf_model_var_vals = {rename_var(decl.name()): bool(cnf_model[decl]) for decl in cnf_model.decls()}
-    eval_order_list = build_variable_eval_order_list(sexpr_result)
-    eval_dict = build_eval_dict(sexpr_result)
-    code_block = build_eval_code_block(eval_order_list, eval_dict)
-    run_eval_code_block(code_block, cnf_model_var_vals)
-
-    cnf_dimacs = cnf_goal.dimacs()
-    cnf_clauses = dimacs_cnf_to_clauses(cnf_dimacs)
-    literal_varname_map = dimacs_cnf_to_literal_varname_map(cnf_dimacs)
-    logger.debug("CLAUSES 0:")
-    print_clause_stats(cnf_clauses)
-    assignment = Assignment()
-    cnf_clauses = unit_propagation(cnf_clauses, assignment)
-
-    logger.debug("CLAUSES 1:")
-    logger.debug("Assn: %d", len(assignment))
-    print_clause_stats(cnf_clauses)
-
-    cnf_clauses = clause_subsumption(cnf_clauses)
-    logger.debug("CLAUSES 2:")
-    logger.debug("Assn: %d", len(assignment))
-    print_clause_stats(cnf_clauses, extended_info=True)
-
-    solved_assignment = quantum_kcnf_solver(cnf_goal)
-
-    logger.info("Model done.")
-
-
-# TODO: Cleanup and refactor to new file.
-def construct_grovers_and_oracles(cnf_goal: Goal()):
-    # expr_val = dimacs_cnf_to_expression(ksat_dimacs)
-    # parse_expr(expr_val, evaluate=True)
-
-    # TODO: Separate into method for sim / translation.
-    # backend = Aer.get_backend('qasm_simulator')
-    ksat_dimacs = cnf_goal.dimacs()
-    cnf_ast = dimacs_cnf_to_cnf_ast(ksat_dimacs)
-    num_vars = get_num_variables(ksat_dimacs)
-    # oracles = build_oracles(cnf_ast, num_vars)
-    oracle = initialize_oracle(cnf_ast, num_vars)
-    oracle.construct_circuit()
-
-    oracle_circuit = oracle.circuit
-    with open('./output/oracle_instrs.qasm', 'w') as oracle_file:
-        oracle_qasm_content = oracle_circuit.qasm()
-        oracle_file.write(oracle_qasm_content)
-    # dag = fast_circuit_to_dag(oracle.circuit)
-    # print("D")
-    # dag_drawer(dag, filename='oracle.png')
-
-    # circuit_drawer(oracle.circuit, filename='circ.png', output='latex')
-
-    # parse_expr(cnf_expr, evaluate=False)
-    # oracle = LogicalExpressionOracle(cnf_expr)  # , optimization=True)
-    # algorithm = Grover(oracle, mct_mode='basic')
-    #
-    # oracle_circuit = oracle.construct_circuit()
-    # grover_circuit = algorithm.construct_circuit()
-    # print("A:")
-    # grover_dag = circuit_to_dag(grover_circuit)
-    # oracle_dag = circuit_to_dag(oracle_circuit)
-    # # dag_drawer(grover_dag)
-    # print("Q:")
-    # # dag_drawer(oracle_dag)
-    # print("DEPTH:", grover_dag.depth())
-    # print("NUM_QUBITS:", grover_dag.num_qubits())
-    # result = algorithm.run(backend)
-    # print(result["result"])
-    # print(result)
+# cnf_model = cnf_solver.model()
+# with open("../output/sexpr_solver_sexpr6.txt", "w") as solver_file:
+#     solver_file.write(cnf_model.sexpr())
+# cnf_model_var_vals = {rename_var(decl.name()): bool(cnf_model[decl]) for decl in cnf_model.decls()}
+# # print("CMVV", cnf_model_var_vals.keys())
+# eval_order_list = build_variable_eval_order_list(sexpr_result)
+# eval_dict = build_eval_dict(sexpr_result)
+# code_block = build_eval_code_block(eval_order_list, eval_dict)
+# var_values = run_eval_code_block(code_block, cnf_model_var_vals)
+# # print(var_values)
