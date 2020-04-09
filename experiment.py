@@ -6,12 +6,12 @@ from collections import defaultdict
 from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
-NUM_CIRCUIT_QUBITS = list(range(2, 11, 1))
+NUM_CIRCUIT_QUBITS = list(range(2, 11, 2))
 NUM_GATES = list(range(1, 11, 2))
-PROPORTION_COUPLINGS = list(i / 10 for i in range(2, 11))
-NUM_SOLVER_QUBITS = list(range(0, 11, 1))
+PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 11, 2))
+NUM_SOLVER_QUBITS = list(range(0, 11, 2))
 
-NUM_TRIALS = 5
+NUM_TRIALS = 3
 
 DATA_DIR = 'experiment_data'
 
@@ -42,7 +42,8 @@ qreg q[{}];
 
 def gen_coupling_graph(num_qubits, proportion):
     couplings = set()
-    num_couplings = int(math.floor(proportion * (num_qubits * (num_qubits - 1)) / 2))
+
+    num_couplings = int(math.ceil(proportion * (num_qubits * (num_qubits - 1)) / 2))
     for i in range(num_couplings):
         qubit0 = random.randrange(0, num_qubits)
         qubit1 = random.randrange(0, num_qubits)
@@ -77,8 +78,11 @@ def get_experiment_data():
     return experiment_count_map
 
 
-def load_coupling_graph(coupling_graph_file_path):
+def load_coupling_graph(coupling_graph_file_path, num_qubits):
     coupling_graph = CouplingMap()
+    for i in range(num_qubits):
+        coupling_graph.add_physical_qubit(i)
+
     with open(coupling_graph_file_path, newline='') as coupling_graph_file:
         csv_reader = csv.reader(coupling_graph_file)
         for source_qubit, destination_qubit in csv_reader:
@@ -108,10 +112,10 @@ def experiments():
                         with open("./experiment_graph.csv", "w") as coupling_file:
                             coupling_file.write(gen_coupling_graph(num_circuit_qubits, proportion_couplings))
 
-                        coupling_graph = load_coupling_graph("./experiment_graph.csv")
+                        coupling_graph = load_coupling_graph("./experiment_graph.csv", num_circuit_qubits)
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
 
-                        qq_command = "python ./qq.py --input-circuit=./experiment_prog.qprog " \
+                        qq_command = "python3 ./qq.py --input-circuit=./experiment_prog.qprog " \
                                      "--coupling-graph=./experiment_graph.csv --log-level=INFO " \
                                      "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
                         subprocess.check_output(qq_command, shell=True).decode('unicode_escape')

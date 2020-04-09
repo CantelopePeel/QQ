@@ -25,7 +25,6 @@ def parse_arguments():
                            help='Log level of output to console.')
     argparser.add_argument('-lf', '--log-file', dest='log_file', nargs='?', type=str)
 
-
     argparser.add_argument('-o', '--output-circuit', required=False, dest='output_circuit', type=str,
                            help='The filename of the output circuit.')
 
