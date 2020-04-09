@@ -131,7 +131,7 @@ def qq_main():
 
     with open('./experiment_info.dat', 'a') as experiment_info_file:
         experiment_info_file.write("Opt_Depth: {}\n".format(best_result_circuit.depth()))
-        experiment_info_file.write("Opt_Ops: {}\n".format(best_result_circuit.count_ops()))
+        experiment_info_file.write("Opt_Ops: {}\n".format(len(best_result_circuit)))
     return
 
 if __name__ == "__main__":

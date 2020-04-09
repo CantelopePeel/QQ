@@ -3,6 +3,9 @@ import math
 import subprocess
 from collections import defaultdict
 
+import matplotlib
+matplotlib.use('Agg')
+
 from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
@@ -146,12 +149,12 @@ def experiments():
                                                                                    opt1_circ.depth(),
                                                                                    opt2_circ.depth(),
                                                                                    opt3_circ.depth()))
-                            comparative_csv_file.write("{},{},{},{},{},{}\n".format(input_circ.count_ops(),
+                            comparative_csv_file.write("{},{},{},{},{},{}\n".format(len(input_circ.count_ops()),
                                                                                     experiment_data_map["Opt_Ops"],
-                                                                                    opt0_circ.count_ops(),
-                                                                                    opt1_circ.count_ops(),
-                                                                                    opt2_circ.count_ops(),
-                                                                                    opt3_circ.count_ops()))
+                                                                                    len(opt0_circ),
+                                                                                    len(opt1_circ),
+                                                                                    len(opt2_circ),
+                                                                                    len(opt3_circ)))
 
 
 if __name__ == "__main__":
