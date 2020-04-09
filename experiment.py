@@ -122,7 +122,7 @@ def experiments():
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
 
                         qq_command = "python3 ./qq.py --input-circuit=./experiment_prog.qprog " \
-                                     "--coupling-graph=./experiment_graph.csv --log-level=WARN " \
+                                     "--coupling-graph=./experiment_graph.csv --log-level=WARNING " \
                                      "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
                         subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
                         experiment_data_map = get_experiment_data()
