@@ -101,15 +101,18 @@ def experiments():
     comparative_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,"
                                "input_depth,qq_depth,opt0_depth,opt1_depth,opt2_depth,opt3_depth,"
                                "input_ops,qq_ops,opt0_ops,opt1_ops,opt2_ops,opt3_ops\n")
-    print("Num experiments:", len(NUM_GATES) * len(NUM_CIRCUIT_QUBITS) * len(NUM_SOLVER_QUBITS)
-          * len(PROPORTION_COUPLINGS) * NUM_TRIALS)
+    num_experiments = len(NUM_GATES) * len(NUM_CIRCUIT_QUBITS) * len(NUM_SOLVER_QUBITS) * len(PROPORTION_COUPLINGS) * NUM_TRIALS
+    print("Num experiments:", num_experiments)
+    experiment_counter = 0
     for num_circuit_qubits in NUM_CIRCUIT_QUBITS:
         for num_gates in NUM_GATES:
             for proportion_couplings in PROPORTION_COUPLINGS:
                 for trial in range(NUM_TRIALS):
                     for num_solver_qubits in NUM_SOLVER_QUBITS:
-                        print("Experiment:", num_circuit_qubits, num_gates, proportion_couplings, num_solver_qubits,
-                              trial)
+                        print("Experiment ({}/{}) | NCQ: {} | NG: {} | PC: {} | NSQ: {} | T: {} |".format(
+                            experiment_counter, num_experiments,
+                            num_circuit_qubits, num_gates, proportion_couplings, num_solver_qubits, trial))
+                        experiment_counter += 1
                         with open("./experiment_prog.qprog", "w") as prog_file:
                             prog_file.write(gen_circuit(num_gates, num_circuit_qubits))
                         with open("./experiment_graph.csv", "w") as coupling_file:
@@ -119,7 +122,7 @@ def experiments():
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
 
                         qq_command = "python3 ./qq.py --input-circuit=./experiment_prog.qprog " \
-                                     "--coupling-graph=./experiment_graph.csv --log-level=INFO " \
+                                     "--coupling-graph=./experiment_graph.csv --log-level=WARN " \
                                      "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
                         subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
                         experiment_data_map = get_experiment_data()
