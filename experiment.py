@@ -9,12 +9,12 @@ matplotlib.use('Agg')
 from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
-NUM_CIRCUIT_QUBITS = list(range(2, 11, 2))
-NUM_GATES = list(range(1, 11, 2))
-PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 11, 2))
-NUM_SOLVER_QUBITS = list(range(0, 11, 2))
+NUM_CIRCUIT_QUBITS = list(range(2, 11, 3))
+NUM_GATES = list(range(1, 11, 3))
+PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 11, 3))
+NUM_SOLVER_QUBITS = list(range(0, 11, 3))
 
-NUM_TRIALS = 3
+NUM_TRIALS = 1
 
 DATA_DIR = 'experiment_data'
 
@@ -46,21 +46,26 @@ qreg q[{}];
 def gen_coupling_graph(num_qubits, proportion):
     couplings = set()
 
-    num_couplings = int(math.ceil(proportion * (num_qubits * (num_qubits - 1)) / 2))
-    for i in range(num_couplings):
-        qubit0 = random.randrange(0, num_qubits)
-        qubit1 = random.randrange(0, num_qubits)
-        while qubit1 == qubit0:
-            qubit1 = random.randrange(0, num_qubits)
+    for i in range(num_qubits - 1):
+        couplings.add((i, i+1))
+        couplings.add((i+1, i))
 
-        while (qubit0, qubit1) in couplings or (qubit1, qubit0) in couplings:
+    num_couplings = int(math.ceil(proportion * (num_qubits * (num_qubits - 1)) / 2))
+    if len(couplings) < num_couplings:
+        for i in range(num_couplings):
             qubit0 = random.randrange(0, num_qubits)
             qubit1 = random.randrange(0, num_qubits)
             while qubit1 == qubit0:
                 qubit1 = random.randrange(0, num_qubits)
 
-        couplings.add((qubit0, qubit1))
-        couplings.add((qubit1, qubit0))
+            while (qubit0, qubit1) in couplings or (qubit1, qubit0) in couplings:
+                qubit0 = random.randrange(0, num_qubits)
+                qubit1 = random.randrange(0, num_qubits)
+                while qubit1 == qubit0:
+                    qubit1 = random.randrange(0, num_qubits)
+
+            couplings.add((qubit0, qubit1))
+            couplings.add((qubit1, qubit0))
 
     couplings_str = ""
     for qubit0, qubit1 in couplings:
