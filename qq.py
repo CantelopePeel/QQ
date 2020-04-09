@@ -3,6 +3,9 @@ import argparse
 import csv
 import logging
 
+import matplotlib
+matplotlib.use('Agg')
+
 from qiskit.circuit.quantumcircuit import QuantumCircuit
 from qiskit.transpiler.coupling import CouplingMap
 from z3 import enable_trace
