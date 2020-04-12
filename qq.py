@@ -4,12 +4,13 @@ import csv
 import logging
 
 import matplotlib
+matplotlib.use('Agg')
+
 from qiskit.converters import dag_to_circuit
 
 from qq.constraints import refine_constrain_swaps_added, count_swaps_added
 from qq.types import ModelVariables
 
-matplotlib.use('Agg')
 
 from qiskit.circuit.quantumcircuit import QuantumCircuit
 from qiskit.transpiler.coupling import CouplingMap
