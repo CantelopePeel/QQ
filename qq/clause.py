@@ -3,6 +3,8 @@ from typing import NewType, Set, List, Dict, Optional
 import tqdm
 from z3 import *
 
+from qq.types import Assignment
+
 
 def Clause(init_literals=None):
     if init_literals is None:
@@ -34,7 +36,9 @@ class ClauseList:
                 variable = abs(literal)
                 self.var_names[variable] = "var_{}".format(variable)
 
-    def load_from_dimacs(self, dimacs_content: str, make_names: bool = False, show_progress: bool = False):
+    def load_from_dimacs(self, dimacs_content: str, make_names: bool = False, show_progress: bool = False,
+                         purge_units: bool = False):
+        assignment = Assignment()
         dimacs_lines = dimacs_content.splitlines()
 
         for line in tqdm.tqdm(dimacs_lines, desc="Loading DIMACS", disable=not show_progress):
@@ -46,7 +50,15 @@ class ClauseList:
                 self.set_variable_name(var_num, var_name)
             elif line_start_char.isdigit() or line_start_char == '-':
                 clause = Clause({int(literal) for literal in line.split(' ')[:-1]})
-                self.add_clause(clause, make_names=make_names)
+
+                if purge_units and len(clause) == 1:
+                    lit = clause.pop()
+                    var = abs(lit)
+                    sign = lit > 0
+                    assignment[var] = sign
+                elif not purge_units:
+                    self.add_clause(clause, make_names=make_names)
+
             elif line_start_char == 'p':
                 pass
             else:

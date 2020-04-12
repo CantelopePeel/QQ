@@ -69,6 +69,7 @@ def generate_model_constraints(model_input: ModelInput, model_variables: ModelVa
         constrain_swap_gate_duration,
         constrain_gate_duration_ends_before_end_time,
         constrain_gate_duration,
+        constrain_gate_ends_before_next_gate,
         constrain_circuit_end_time,
         constrain_swaps_added,
     ]
@@ -110,7 +111,7 @@ def build_model(circ: QuantumCircuit, coupling_map: CouplingMap, qubits_used: in
     model_variables = generate_model_variables(model_inputs)
     goal = generate_model_constraints(model_inputs, model_variables)
 
-    return goal, model_inputs
+    return goal, model_inputs, model_variables
 
 
 # TODO: Take this out and rework once we turn all of this into a transpiler pass.
@@ -358,7 +359,7 @@ def quantum_kcnf_solver(goal: Goal):
 
 
 def check_solver_capable(num_vars, num_clauses) -> bool:
-    if num_vars <= 100:
+    if num_vars <= 00:
         logger.debug("CCC: V: {} C: {}".format(num_vars, num_clauses))
         return True
     else:
@@ -375,13 +376,14 @@ def run_solver(solver_state: bytes):
         dimacs_file.write(state_str)
 
     clause_list = ClauseList()
-    clause_list.load_from_dimacs(state_str, make_names=True)
-    assignment = Assignment()
+    assignment = clause_list.load_from_dimacs(state_str, make_names=True, purge_units=True)
 
-    unit_prop_result = unit_propagation(clause_list, assignment, num_levels=1, limit_remaining_items=-1)
-    if unit_prop_result is None:
-        return b"none"
-    clause_list, assignment = unit_prop_result
+
+
+    # unit_prop_result = unit_propagation(clause_list, assignment, num_levels=1, limit_remaining_items=-1)
+    # if unit_prop_result is None:
+    #     return b"none"
+    # clause_list, assignment = unit_prop_result
     # print_clause_stats(clause_list)
 
     assignment_clauses = []
@@ -491,7 +493,7 @@ def construct_model(input_circuit: QuantumCircuit, input_coupling_graph: Couplin
     logger.debug("Remap circuit QASM: \n{}".format(remap_circuit.qasm()))
 
     logger.info("Generating constraint model.")
-    goal, model_input = build_model(remap_circuit, input_coupling_graph, qubits_used,
+    goal, model_input, model_variables = build_model(remap_circuit, input_coupling_graph, qubits_used,
                                     max_circuit_time=max_circuit_time,
                                     max_swaps_addable=max_swaps_addable)
     logger.info("Constraint model: %d constraints.", goal.size())
@@ -499,24 +501,13 @@ def construct_model(input_circuit: QuantumCircuit, input_coupling_graph: Couplin
     logger.debug("KSAT PROCEDURE")
     # cnf_goal, cnf_sexpr, cnf_clause_list = transform_goal_to_cnf(goal, max_clause_size=3)
 
-    cnf_goal_solver = SolverFor("QF_FD")
-    cnf_goal_solver.add(goal)
+    goal_solver = SolverFor("QF_FD")
+    goal_solver.add(goal)
+    logger.info("Model construction done.")
 
-    if cnf_goal_solver.check() == sat:
-        model = cnf_goal_solver.model()
+    return goal_solver, model_input, model_variables
 
-        stats = cnf_goal_solver.statistics()
-        decisions = stats.get_key_value('sat decisions')
-        with open('./experiment_info.dat', 'a') as experiment_info_file:
-            experiment_info_file.write("SAT_Decisions: {}\n".format(decisions))
 
-        opt_dag, init_layout = construct_circuit_from_model(model, model_input)
-        opt_circ = dag_to_circuit(opt_dag)
-        print(opt_circ)
-        logger.info("Model done.")
-        return opt_circ
-    else:
-        return None
 
 # TODO: OLD model stuff.
 #

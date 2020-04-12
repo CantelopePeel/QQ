@@ -258,6 +258,28 @@ def constrain_gate_duration(model_input: ModelInput, model_variables: ModelVaria
     return goal
 
 
+def constrain_gate_ends_before_next_gate(model_input: ModelInput, model_variables: ModelVariables) -> Goal:
+    goal = Goal()
+    gate_durations = model_variables['gate_duration']
+    gate_start_times = model_variables['gate_start_time']
+
+    num_physical_qubits = model_input.coupling_graph.size()
+
+    prev_gate_duration = None
+    prev_gate_start_time = None
+    for node_index, node in enumerate(topological_gate_nodes(model_input.circuit)):
+        gate_duration = gate_durations[node]
+        gate_start_time = gate_start_times[node]
+        if node_index != 0:
+            # Constrain all of the gate durations to have a threshold at least as high as the swap gate durations.
+            for physical_qubit in range(num_physical_qubits):
+                goal.add(gate_start_time[physical_qubit] == prev_gate_start_time[physical_qubit] + prev_gate_duration[physical_qubit])
+
+        prev_gate_duration = gate_duration
+        prev_gate_start_time = gate_start_time
+    return goal
+
+
 def constrain_circuit_end_time(model_input: ModelInput, model_variables: ModelVariables) -> Goal:
     goal = Goal()
     circuit_end_time = model_variables['circuit_end_time']
@@ -299,6 +321,7 @@ def constrain_swaps_added(model_input: ModelInput, model_variables: ModelVariabl
     for swap_gate_exists in swap_gate_exists_list:
         goal.add(Or(swap_gate_exists == 0,
                     swap_gate_exists == 1))
+    # goal.add(swaps_added >= Sum(swap_gate_exists_list))
     # swap_gate_counts = [If(swap_gate_exists, 1, 0) for swap_gate_exists in swap_gate_exists_list]
     # goal.add(swaps_added >= Sum(swap_gate_counts))
     swap_gate_exists_pb_list = [(swap_gate_exists == 1, 1) for swap_gate_exists in swap_gate_exists_list]
@@ -307,3 +330,34 @@ def constrain_swaps_added(model_input: ModelInput, model_variables: ModelVariabl
 
     return goal
 
+
+def count_swaps_added(model_variables: ModelVariables, model: ModelRef) -> int:
+    swap_gate_insertions = model_variables['swap_gate_insertion']
+
+    swap_gate_exists_list = [swap_gate_insertions[node][layer][coupling]
+                             for node in swap_gate_insertions
+                             for layer in swap_gate_insertions[node]
+                             for coupling in swap_gate_insertions[node][layer]]
+    swap_gates_added = 0
+    for swap_gate_exists in swap_gate_exists_list:
+        swap_gates_added += model[swap_gate_exists].as_long()
+
+    return swap_gates_added
+
+
+def refine_constrain_swaps_added(max_swaps_addable: int, model_variables: ModelVariables) -> Goal:
+    goal = Goal()
+    swaps_added = model_variables['swaps_added']
+    swap_gate_insertions = model_variables['swap_gate_insertion']
+    max_swaps_addable = max_swaps_addable
+
+    swap_gate_exists_list = [swap_gate_insertions[node][layer][coupling]
+                             for node in swap_gate_insertions
+                             for layer in swap_gate_insertions[node]
+                             for coupling in swap_gate_insertions[node][layer]]
+
+    swap_gate_exists_pb_list = [(swap_gate_exists == 1, 1) for swap_gate_exists in swap_gate_exists_list]
+    swap_gate_count_constraint = PbLe(swap_gate_exists_pb_list, max_swaps_addable)
+    goal.add(swap_gate_count_constraint)
+
+    return goal

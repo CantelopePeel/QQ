@@ -4,14 +4,22 @@ import csv
 import logging
 
 import matplotlib
+from qiskit.converters import dag_to_circuit
+
+from qq.constraints import refine_constrain_swaps_added, count_swaps_added
+from qq.types import ModelVariables
+
+import pydot
 matplotlib.use('Agg')
 
 from qiskit.circuit.quantumcircuit import QuantumCircuit
 from qiskit.transpiler.coupling import CouplingMap
-from z3 import enable_trace
+from z3 import *
 
 import qq.model
+import qq.util
 
+logger = logging.getLogger(__name__)
 
 def parse_arguments():
     argparser = argparse.ArgumentParser()
@@ -76,8 +84,69 @@ def load_coupling_graph(coupling_graph_file_path):
     return coupling_graph
 
 
+def improve_criteria(criteria_name: str, min_value: int, max_value: int, model_variables: ModelVariables, solver: Solver):
+    criteria_var = Int(criteria_name)
+
+    init_check = solver.check()
+    if init_check != sat:
+        return None
+
+    best_model = solver.model()
+    best_criteria_val = max_value
+
+    # Contract range to find a minimum:
+    l = min_value
+    r = max_value
+    while l <= r:
+        m = math.floor((l+r)/2)
+        solver.push()
+        if criteria_name == "swaps_added":
+            solver.add(refine_constrain_swaps_added(m, model_variables))
+        solver.add(criteria_var <= m)
+        is_sat = solver.check()
+        print("BS:", criteria_name, l, r, m, is_sat)
+
+        if is_sat == sat:
+            best_model = solver.model()
+            if criteria_name == "swaps_added":
+                best_criteria_val = count_swaps_added(model_variables, best_model)
+            else:
+                best_criteria_val = best_model[criteria_var].as_long()
+            r = best_criteria_val - 1
+        elif is_sat == unsat:
+            solver.pop()
+            l = m + 1
+        else:
+            logger.error("Solver in unknown state: %s", solver.reason_unknown())
+    return best_model, best_criteria_val
+
+
+def optimize_circuit(input_circuit, coupling_graph, num_solver_qubits, max_circuit_time, max_swaps_addable):
+    solver, model_input, model_variables = qq.model.construct_model(input_circuit, coupling_graph, num_solver_qubits,
+                                                   max_circuit_time=max_circuit_time,
+                                                   max_swaps_addable=max_swaps_addable)
+
+    best_model, best_circuit_end_time = improve_criteria("circuit_end_time", 0, max_circuit_time, model_variables, solver)
+    best_model, best_swaps_added = improve_criteria("swaps_added", 0, max_swaps_addable, model_variables, solver)
+
+    print("Best CET:", best_circuit_end_time, best_model[model_variables["circuit_end_time"]])
+    print("Best SA:", best_swaps_added, best_model[model_variables["swaps_added"]])
+
+    stats = solver.statistics()
+    decisions = stats.get_key_value('sat decisions')
+    with open('./experiment_info.dat', 'a') as experiment_info_file:
+        experiment_info_file.write("SAT_Decisions: {}\n".format(decisions))
+
+    opt_dag, init_layout = qq.model.construct_circuit_from_model(best_model, model_input)
+    opt_circ = dag_to_circuit(opt_dag)
+    opt_dag.draw()
+    return opt_circ
+
+
 # Primary entry point for QQ.
 def qq_main():
+    global logger
+
     # Parse arguments
     args = parse_arguments()
     if args.log_level in ("DEBUG"):
@@ -93,34 +162,15 @@ def qq_main():
     coupling_graph = load_coupling_graph(args.coupling_graph)
     logger.info("Loaded coupling graph: {}".format(args.coupling_graph))
 
-    max_circuit_time = 10
-    max_swaps_addable = 10
+    max_circuit_time = len(input_circuit)
+    undirected_couplings = [coupling for coupling in qq.util.get_undirected_couplings(coupling_graph)]
+    num_undirected_couplings = len(input_circuit)
+    max_swaps_addable = len(input_circuit)
 
-    best_circuit_time = max_circuit_time
-    best_swaps_addable = max_swaps_addable
-    best_result_circuit = None
-
-    with open('./experiment_info.dat', 'w') as experiment_info_file:
+    with open('./experiment_info.dat', 'w') as _:
         pass
 
-    for circuit_time in range(max_circuit_time, 0, -1):
-        print("Circuit time:", circuit_time)
-        result_circuit = qq.model.construct_model(input_circuit, coupling_graph, args.num_solver_qubits,
-                                                  max_circuit_time=circuit_time,
-                                                  max_swaps_addable=best_swaps_addable)
-        if result_circuit is None:
-            best_circuit_time = max_circuit_time + 1
-
-            break
-
-    for swaps_addable in range(max_swaps_addable, 0, -1):
-        print("Swaps addable:", swaps_addable)
-        result_circuit = qq.model.construct_model(input_circuit, coupling_graph, args.num_solver_qubits,
-                                                  max_circuit_time=best_circuit_time, max_swaps_addable=swaps_addable)
-        if result_circuit is None:
-            best_swaps_addable = best_swaps_addable + 1
-            break
-        best_result_circuit = result_circuit
+    best_result_circuit = optimize_circuit(input_circuit, coupling_graph, args.num_solver_qubits, max_circuit_time, max_swaps_addable)
 
     result_qasm = best_result_circuit.qasm()
     if args.output_circuit is not None:
@@ -132,7 +182,26 @@ def qq_main():
     with open('./experiment_info.dat', 'a') as experiment_info_file:
         experiment_info_file.write("Opt_Depth: {}\n".format(best_result_circuit.depth()))
         experiment_info_file.write("Opt_Ops: {}\n".format(len(best_result_circuit)))
+
     return
+
+    # for circuit_time in range(max_circuit_time, 0, -1):
+    #     print("Circuit time:", circuit_time)
+    #
+    #     if result_circuit is None:
+    #         best_circuit_time = max_circuit_time + 1
+    #
+    #         break
+    #
+    # for swaps_addable in range(max_swaps_addable, 0, -1):
+    #     print("Swaps addable:", swaps_addable)
+    #     result_circuit = qq.model.construct_model(input_circuit, coupling_graph, args.num_solver_qubits,
+    #                                               max_circuit_time=best_circuit_time, max_swaps_addable=swaps_addable)
+    #     if result_circuit is None:
+    #         best_swaps_addable = best_swaps_addable + 1
+    #         break
+    #     best_result_circuit = result_circuit
+
 
 if __name__ == "__main__":
     qq_main()

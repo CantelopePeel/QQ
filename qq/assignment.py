@@ -9,6 +9,7 @@ from typing import Dict, NewType, Optional, Set
 import tqdm
 
 from qq.clause import ClauseList, Clause
+from qq.types import Assignment
 
 logger = logging.getLogger(__name__)
 
@@ -18,18 +19,6 @@ class AssignmentValue(Enum):
     TRUE = 1
     UNDEFINED = 2
 
-
-# def Assignment(init_values=None):
-#     if init_values is None:
-#         init_values = {}
-#     assignment_type = NewType('Assignment', Dict[int, AssignmentValue])
-#     return assignment_type(init_values)
-
-def Assignment(init_values=None):
-    if init_values is None:
-        init_values = {}
-    assignment_type = NewType('Assignment', Dict[int, bool])
-    return assignment_type(init_values)
 
 def validate_clauses_and_assignment(clause_list: ClauseList, assignment: Assignment):
     for clause_index, clause in enumerate(clause_list.clauses()):
@@ -138,6 +127,7 @@ def clause_subsumption(clause_list: ClauseList, show_progress: bool = False):
 
     logger.debug("Subsumed clauses: {} Remaining: {}".format(num_subsumed, non_subsumed_clauses.num_clauses()))
     return non_subsumed_clauses
+
 
 def special_limited_unit_propagation(clause_list: ClauseList, assignment: Assignment, num_levels: int = -1):
     # No-op if number of propagation levels is zero.
