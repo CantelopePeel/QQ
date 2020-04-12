@@ -160,10 +160,10 @@ def qq_main():
     coupling_graph = load_coupling_graph(args.coupling_graph)
     logger.info("Loaded coupling graph: {}".format(args.coupling_graph))
 
-    max_circuit_time = len(input_circuit)
+    max_circuit_time = len(input_circuit) * 3
     undirected_couplings = [coupling for coupling in qq.util.get_undirected_couplings(coupling_graph)]
     num_undirected_couplings = len(input_circuit)
-    max_swaps_addable = len(input_circuit)
+    max_swaps_addable = len(input_circuit) * 3
 
     with open('./experiment_info.dat', 'w') as _:
         pass
