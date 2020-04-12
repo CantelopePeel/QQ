@@ -9,7 +9,6 @@ from qiskit.converters import dag_to_circuit
 from qq.constraints import refine_constrain_swaps_added, count_swaps_added
 from qq.types import ModelVariables
 
-import pydot
 matplotlib.use('Agg')
 
 from qiskit.circuit.quantumcircuit import QuantumCircuit
@@ -139,7 +138,6 @@ def optimize_circuit(input_circuit, coupling_graph, num_solver_qubits, max_circu
 
     opt_dag, init_layout = qq.model.construct_circuit_from_model(best_model, model_input)
     opt_circ = dag_to_circuit(opt_dag)
-    opt_dag.draw()
     return opt_circ
 
 
