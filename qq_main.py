@@ -21,7 +21,7 @@ import qq.util
 
 logger = logging.getLogger(__name__)
 
-def parse_arguments():
+def parse_arguments(arg_list=None):
     argparser = argparse.ArgumentParser()
     # Program input arguments:
     argparser.add_argument('-i', '--input-circuit', required=True, dest='input_circuit', type=str,
@@ -44,7 +44,10 @@ def parse_arguments():
 
 
     # Parsing arguments.
-    args = argparser.parse_args()
+    if arg_list is None:
+        args = argparser.parse_args()
+    else: 
+        args = argparser.parse_args(arg_list)
     return args
 
 
@@ -143,11 +146,11 @@ def optimize_circuit(input_circuit, coupling_graph, num_solver_qubits, max_circu
 
 
 # Primary entry point for QQ.
-def qq_main():
+def qq_main(arg_list=None):
     global logger
 
     # Parse arguments
-    args = parse_arguments()
+    args = parse_arguments(arg_list)
     if args.log_level in ("DEBUG"):
         enable_trace('qq')
         # enable_trace('qq_sat_assign')

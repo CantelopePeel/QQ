@@ -9,16 +9,17 @@ matplotlib.use('Agg')
 from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
-NUM_CIRCUIT_QUBITS = list(range(2, 11, 3))
-NUM_GATES = list(range(1, 11, 3))
-PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 11, 3))
-NUM_SOLVER_QUBITS = list(range(0, 11, 3))
+NUM_CIRCUIT_QUBITS = list(range(3, 11, 3))
+NUM_GATES = list(range(1, 20, 3))
+PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 4, 1))
+NUM_SOLVER_QUBITS = list(range(0, 20, 3))
 
-NUM_TRIALS = 1
+NUM_TRIALS = 5
 
 DATA_DIR = 'experiment_data'
 
 import random
+from qq_main import qq_main
 
 random.seed(0)
 
@@ -51,8 +52,9 @@ def gen_coupling_graph(num_qubits, proportion):
         couplings.add((i+1, i))
 
     num_couplings = int(math.ceil(proportion * (num_qubits * (num_qubits - 1)) / 2))
-    if len(couplings) < num_couplings:
-        for i in range(num_couplings):
+    if (len(couplings) / 2) < num_couplings:
+        num_rem_couplings = num_couplings - int((len(couplings) / 2))
+        for i in range(num_rem_couplings):
             qubit0 = random.randrange(0, num_qubits)
             qubit1 = random.randrange(0, num_qubits)
             while qubit1 == qubit0:
@@ -126,10 +128,11 @@ def experiments():
                         coupling_graph = load_coupling_graph("./experiment_graph.csv", num_circuit_qubits)
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
 
-                        qq_command = "python3 ./qq.py --input-circuit=./experiment_prog.qprog " \
+                        qq_command = "--input-circuit=./experiment_prog.qprog " \
                                      "--coupling-graph=./experiment_graph.csv --log-level=WARNING " \
                                      "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
-                        subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
+                        qq_main(arg_list=qq_command.split(" "))
+                        #subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
                         experiment_data_map = get_experiment_data()
 
                         performance_csv_file.write("{},{},{},{},{},{},{}\n".format(num_circuit_qubits,
