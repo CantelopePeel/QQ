@@ -359,7 +359,7 @@ def quantum_kcnf_solver(goal: Goal):
 
 
 def check_solver_capable(num_vars, num_clauses) -> bool:
-    if num_vars <= 00:
+    if num_vars <= 1000:
         logger.debug("CCC: V: {} C: {}".format(num_vars, num_clauses))
         return True
     else:
@@ -372,8 +372,8 @@ num_solver_qubits = 0
 def run_solver(solver_state: bytes):
     state_str = solver_state.decode('unicode_escape')
 
-    with open('./state_dimacs.txt', 'w') as dimacs_file:
-        dimacs_file.write(state_str)
+    #with open('./state_dimacs.txt', 'w') as dimacs_file:
+    #    dimacs_file.write(state_str)
 
     clause_list = ClauseList()
     assignment = clause_list.load_from_dimacs(state_str, make_names=True, purge_units=True)
@@ -387,7 +387,7 @@ def run_solver(solver_state: bytes):
     # print_clause_stats(clause_list)
 
     assignment_clauses = []
-    print("Vs:", clause_list.num_variables(), clause_list.num_clauses(), clause_list.num_variables() + clause_list.num_clauses() )
+    # print("Vs:", clause_list.num_variables(), clause_list.num_clauses(), clause_list.num_variables() + clause_list.num_clauses() )
     # TODO remove if unneeded.
     # for var in clause_list.variables():
     #     if var in assignment:

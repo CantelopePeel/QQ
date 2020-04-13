@@ -10,11 +10,11 @@ from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
 NUM_CIRCUIT_QUBITS = list(range(3, 11, 3))
-NUM_GATES = list(range(1, 20, 3))
+NUM_GATES = list(range(1, 20, 5))
 PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 4, 1))
 NUM_SOLVER_QUBITS = list(range(0, 20, 3))
 
-NUM_TRIALS = 5
+NUM_TRIALS = 1
 
 DATA_DIR = 'experiment_data'
 
@@ -115,15 +115,15 @@ def experiments():
         for num_gates in NUM_GATES:
             for proportion_couplings in PROPORTION_COUPLINGS:
                 for trial in range(NUM_TRIALS):
+                    with open("./experiment_prog.qprog", "w") as prog_file:
+                        prog_file.write(gen_circuit(num_gates, num_circuit_qubits))
+                    with open("./experiment_graph.csv", "w") as coupling_file:
+                        coupling_file.write(gen_coupling_graph(num_circuit_qubits, proportion_couplings))
                     for num_solver_qubits in NUM_SOLVER_QUBITS:
                         print("Experiment ({}/{}) | NCQ: {} | NG: {} | PC: {} | NSQ: {} | T: {} |".format(
                             experiment_counter, num_experiments,
                             num_circuit_qubits, num_gates, proportion_couplings, num_solver_qubits, trial))
                         experiment_counter += 1
-                        with open("./experiment_prog.qprog", "w") as prog_file:
-                            prog_file.write(gen_circuit(num_gates, num_circuit_qubits))
-                        with open("./experiment_graph.csv", "w") as coupling_file:
-                            coupling_file.write(gen_coupling_graph(num_circuit_qubits, proportion_couplings))
 
                         coupling_graph = load_coupling_graph("./experiment_graph.csv", num_circuit_qubits)
                         input_circ = QuantumCircuit.from_qasm_file("./experiment_prog.qprog")
