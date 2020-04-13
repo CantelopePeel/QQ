@@ -99,8 +99,8 @@ def load_coupling_graph(coupling_graph_file_path, num_qubits):
 
 
 def experiments():
-    performance_csv_file = open("./expriment_perfomance.csv", "w")
-    comparative_csv_file = open("./expriment_comparative.csv", "w")
+    performance_csv_file = open("./experiment_performance.csv", "w")
+    comparative_csv_file = open("./experiment_comparative.csv", "w")
     performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,"
                                "sat_decisions,grover_iterations\n")
     comparative_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,"
@@ -163,6 +163,8 @@ def experiments():
                                                                                     len(opt1_circ),
                                                                                     len(opt2_circ),
                                                                                     len(opt3_circ)))
+                            comparative_csv_file.flush()
+                        performance_csv_file.flush()
 
 
 if __name__ == "__main__":
