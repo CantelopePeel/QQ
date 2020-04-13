@@ -87,14 +87,16 @@ def load_coupling_graph(coupling_graph_file_path):
     return coupling_graph
 
 
-def improve_criteria(criteria_name: str, min_value: int, max_value: int, model_variables: ModelVariables, solver: Solver):
+def solver_to_new(goal):
+    new_solver = SolverFor("QF_FD")
+    #new_solver.set("threads", 32)
+    new_solver.add(goal)
+    return new_solver
+
+def improve_criteria(criteria_name: str, min_value: int, max_value: int, model_variables: ModelVariables, goal: Goal):
     criteria_var = Int(criteria_name)
 
-    init_check = solver.check()
-    if init_check != sat:
-        return None
-
-    best_model = solver.model()
+    best_model = None
     best_criteria_val = max_value
 
     # Contract range to find a minimum:
@@ -102,43 +104,47 @@ def improve_criteria(criteria_name: str, min_value: int, max_value: int, model_v
     r = max_value
     while l <= r:
         m = math.floor((l+r)/2)
-        solver.push()
+        new_solver = solver_to_new(goal)
         if criteria_name == "swaps_added":
-            solver.add(refine_constrain_swaps_added(m, model_variables))
-        solver.add(criteria_var <= m)
-        is_sat = solver.check()
+            new_solver.add(refine_constrain_swaps_added(m, model_variables))
+        new_solver.add(criteria_var <= m)
+        is_sat = new_solver.check()
         print("BS:", criteria_name, l, r, m, is_sat)
 
         if is_sat == sat:
-            best_model = solver.model()
+            stats = new_solver.statistics()
+            decisions = stats.get_key_value('sat decisions')
+            with open('./experiment_info.dat', 'a') as experiment_info_file:
+                experiment_info_file.write("SAT_Decisions: {}\n".format(decisions))
+            
+            best_model = new_solver.model()
             if criteria_name == "swaps_added":
                 best_criteria_val = count_swaps_added(model_variables, best_model)
             else:
                 best_criteria_val = best_model[criteria_var].as_long()
             r = best_criteria_val - 1
         elif is_sat == unsat:
-            solver.pop()
             l = m + 1
         else:
             logger.error("Solver in unknown state: %s", solver.reason_unknown())
+
+    goal.add(criteria_var <= best_criteria_val)
     return best_model, best_criteria_val
 
 
 def optimize_circuit(input_circuit, coupling_graph, num_solver_qubits, max_circuit_time, max_swaps_addable):
-    solver, model_input, model_variables = qq.model.construct_model(input_circuit, coupling_graph, num_solver_qubits,
+    goal, solver, model_input, model_variables = qq.model.construct_model(input_circuit, coupling_graph, num_solver_qubits,
                                                    max_circuit_time=max_circuit_time,
                                                    max_swaps_addable=max_swaps_addable)
 
-    best_model, best_circuit_end_time = improve_criteria("circuit_end_time", 0, max_circuit_time, model_variables, solver)
-    best_model, best_swaps_added = improve_criteria("swaps_added", 0, max_swaps_addable, model_variables, solver)
+    with open('./experiment_info.dat', 'a') as experiment_info_file:
+        experiment_info_file.write("Assertions: "+ str(len(goal)) +"\n")
+    best_model, best_circuit_end_time = improve_criteria("circuit_end_time", 0, max_circuit_time, model_variables, goal)
+    best_model, best_swaps_added = improve_criteria("swaps_added", 0, max_swaps_addable, model_variables, goal)
 
     print("Best CET:", best_circuit_end_time, best_model[model_variables["circuit_end_time"]])
     print("Best SA:", best_swaps_added, best_model[model_variables["swaps_added"]])
 
-    stats = solver.statistics()
-    decisions = stats.get_key_value('sat decisions')
-    with open('./experiment_info.dat', 'a') as experiment_info_file:
-        experiment_info_file.write("SAT_Decisions: {}\n".format(decisions))
 
     opt_dag, init_layout = qq.model.construct_circuit_from_model(best_model, model_input)
     opt_circ = dag_to_circuit(opt_dag)

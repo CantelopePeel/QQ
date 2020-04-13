@@ -56,13 +56,14 @@ class ClauseList:
                     var = abs(lit)
                     sign = lit > 0
                     assignment[var] = sign
-                elif not purge_units:
+                else:
                     self.add_clause(clause, make_names=make_names)
 
             elif line_start_char == 'p':
                 pass
             else:
                 raise RuntimeError("Unexpected character at start of DIMACS line.")
+        return assignment
 
     def to_dimacs(self):
         dimacs_content = ""

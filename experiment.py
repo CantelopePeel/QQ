@@ -9,12 +9,17 @@ matplotlib.use('Agg')
 from qiskit import transpile, QuantumCircuit
 from qiskit.transpiler import CouplingMap
 
-NUM_CIRCUIT_QUBITS = list(range(3, 11, 3))
-NUM_GATES = list(range(1, 20, 5))
+NUM_CIRCUIT_QUBITS = list(range(3, 11, 2))
+NUM_GATES = list(range(1, 12, 2))
 PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 4, 1))
-NUM_SOLVER_QUBITS = list(range(0, 20, 3))
+NUM_SOLVER_QUBITS = list(range(0, 25, 3))
 
-NUM_TRIALS = 1
+NUM_CIRCUIT_QUBITS = [10]
+NUM_GATES = [10]
+PROPORTION_COUPLINGS = [0.1]
+NUM_SOLVER_QUBITS = list(range(0, 25, 1))
+
+NUM_TRIALS = 5
 
 DATA_DIR = 'experiment_data'
 
@@ -103,7 +108,7 @@ def load_coupling_graph(coupling_graph_file_path, num_qubits):
 def experiments():
     performance_csv_file = open("./experiment_performance.csv", "w")
     comparative_csv_file = open("./experiment_comparative.csv", "w")
-    performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,"
+    performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,num_assertions"
                                "sat_decisions,grover_iterations\n")
     comparative_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,"
                                "input_depth,qq_depth,opt0_depth,opt1_depth,opt2_depth,opt3_depth,"
@@ -132,16 +137,19 @@ def experiments():
                                      "--coupling-graph=./experiment_graph.csv --log-level=WARNING " \
                                      "--log-file=./qq.log --num-solver-qubits={}".format(num_solver_qubits)
                         qq_main(arg_list=qq_command.split(" "))
-                        #subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
+                        #output = subprocess.check_output(qq_command, shell=True).decode('unicode_escape')
+                        #with open("qq_output.txt", "w") as qq_out_file:
+                        #    qq_out_file.write(output)
                         experiment_data_map = get_experiment_data()
 
-                        performance_csv_file.write("{},{},{},{},{},{},{}\n".format(num_circuit_qubits,
+                        performance_csv_file.write("{},{},{},{},{},{},{},{}\n".format(num_circuit_qubits,
                                                                             num_gates,
                                                                             proportion_couplings,
                                                                             trial,
                                                                             num_solver_qubits,
                                                                             experiment_data_map["SAT_Decisions"],
-                                                                            experiment_data_map["Iterations"]))
+                                                                            experiment_data_map["Iterations"],
+                                                                            experiment_data_map["Assertions"]))
 
                         if num_solver_qubits == 0:
                             comparative_csv_file.write(
