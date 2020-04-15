@@ -14,12 +14,12 @@ NUM_GATES = list(range(1, 12, 2))
 PROPORTION_COUPLINGS = list(i / 10 for i in range(1, 4, 1))
 NUM_SOLVER_QUBITS = list(range(0, 25, 3))
 
-NUM_CIRCUIT_QUBITS = [10]
-NUM_GATES = [10]
+NUM_CIRCUIT_QUBITS = [3]
+NUM_GATES = [3]
 PROPORTION_COUPLINGS = [0.1]
-NUM_SOLVER_QUBITS = list(range(0, 25, 1))
+NUM_SOLVER_QUBITS = list(range(0, 30, 1))
 
-NUM_TRIALS = 5
+NUM_TRIALS = 10
 
 DATA_DIR = 'experiment_data'
 
@@ -108,8 +108,8 @@ def load_coupling_graph(coupling_graph_file_path, num_qubits):
 def experiments():
     performance_csv_file = open("./experiment_performance.csv", "w")
     comparative_csv_file = open("./experiment_comparative.csv", "w")
-    performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,num_assertions"
-                               "sat_decisions,grover_iterations\n")
+    performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,"
+                               "sat_decisions,grover_iterations,num_assertions\n")
     comparative_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,"
                                "input_depth,qq_depth,opt0_depth,opt1_depth,opt2_depth,opt3_depth,"
                                "input_ops,qq_ops,opt0_ops,opt1_ops,opt2_ops,opt3_ops\n")
