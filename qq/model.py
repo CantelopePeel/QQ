@@ -358,6 +358,7 @@ def quantum_kcnf_solver(goal: Goal):
     return assignment
 
 num_solver_qubits = 0
+alt_solver_enabled = False
 
 def check_solver_capable(num_vars, num_clauses) -> bool:
     if num_vars + num_clauses + 1 <= num_solver_qubits:
@@ -367,9 +368,11 @@ def check_solver_capable(num_vars, num_clauses) -> bool:
         return False
 
 
-
-
 def run_solver(solver_state: bytes):
+    global alt_solver_enabled
+    if alt_solver_enabled:
+        return b"none"
+
     state_str = solver_state.decode('unicode_escape')
 
     with open('./state_dimacs.txt', 'w') as dimacs_file:
@@ -445,6 +448,15 @@ def run_solver(solver_state: bytes):
         sim_result = bytes(remap_output, 'unicode_escape')
         with open('./experiment_info.dat', 'a') as experiment_info_file:
             experiment_info_file.write(sim_debug_output+"\n")
+        alt_solver_enabled = True
+        alt_solver = SolverFor("QF_FD")
+        alt_solver.from_string(sat_cnf)
+        if alt_solver.check() == sat:
+            stats = alt_solver.statistics()
+            decisions = stats.get_key_value('sat decisions')
+            with open('./experiment_info.dat', 'a') as experiment_info_file:
+                experiment_info_file.write("Alt_SAT_Decisions: {}\n".format(decisions))
+        alt_solver_enabled = False
     return sim_result
 
 

@@ -109,7 +109,7 @@ def experiments():
     performance_csv_file = open("./experiment_performance.csv", "w")
     comparative_csv_file = open("./experiment_comparative.csv", "w")
     performance_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,num_solver_qubits,"
-                               "sat_decisions,grover_iterations,num_assertions\n")
+                               "sat_decisions,alt_sat_decisions,grover_iterations,num_assertions\n")
     comparative_csv_file.write("num_circuit_qubits,num_gates,prop_couplings,trial,"
                                "input_depth,qq_depth,opt0_depth,opt1_depth,opt2_depth,opt3_depth,"
                                "input_ops,qq_ops,opt0_ops,opt1_ops,opt2_ops,opt3_ops\n")
@@ -142,12 +142,13 @@ def experiments():
                         #    qq_out_file.write(output)
                         experiment_data_map = get_experiment_data()
 
-                        performance_csv_file.write("{},{},{},{},{},{},{},{}\n".format(num_circuit_qubits,
+                        performance_csv_file.write("{},{},{},{},{},{},{},{},{}\n".format(num_circuit_qubits,
                                                                             num_gates,
                                                                             proportion_couplings,
                                                                             trial,
                                                                             num_solver_qubits,
                                                                             experiment_data_map["SAT_Decisions"],
+                                                                            experiment_data_map["Alt_SAT_Decisions"],
                                                                             experiment_data_map["Iterations"],
                                                                             experiment_data_map["Assertions"]))
 
