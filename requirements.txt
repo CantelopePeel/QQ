@@ -56,6 +56,6 @@ scipy==1.4.1
 six==1.14.0
 sympy==1.5.1
 tqdm==4.42.1
-urllib3==1.25.8
+urllib3==1.26.5
 websockets==7.0
 zipp==2.1.0
